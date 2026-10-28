@@ -30,7 +30,7 @@ System: Fleet, Config, Rules, API & Security, Simulator, Event Log, Spec & Roadm
 
 ## Fleet (farm management)
 
-Ten Tomahawks and two dev benches run concurrently on a 30x simulation clock. Pick any machine
+Ten Tomahawks print concurrently; four more Tomahawks and two dev benches sit idle for you to try on a 30x simulation clock. Pick any machine
 in the top bar and every other page (dashboard, thermal, print, ...) shows that machine.
 Fleet tabs: Overview (bulk pause/resume/cancel/cool/send job/set group), Queue (auto-dispatch to idle
 machines), Cameras (live wall), Alerts (failure detection, auto-pause), Spools (shared stock),

@@ -224,7 +224,7 @@ fn queue(ui: &mut Ui, m: &mut Model) {
             }
         });
         panel(&mut c[1], "Dispatcher", |ui| {
-            ui.checkbox(&mut m.auto_dispatch, "Auto-dispatch to idle machines (not dev benches)");
+            ui.checkbox(&mut m.auto_dispatch, "Auto-dispatch queued jobs to idle machines (off by default; not dev benches)");
             ui.label(dim("Highest priority first, then oldest. A machine with a fault is skipped."));
             ui.add_space(4.0);
             ui.label(RichText::new("RECENTLY COMPLETED").size(11.0).color(DIM).monospace());
@@ -546,9 +546,9 @@ fn rollout(ui: &mut Ui, m: &mut Model) {
         if m.disc.is_empty() { ui.label(dim("No unpaired machines announced.")); }
         if button(ui, "Scan network") {
             m.scan_n += 1;
-            let name = format!("Tomahawk-{}", 11 + m.scan_n);
+            let name = format!("Tomahawk-{}", 15 + m.scan_n);
             if !m.fleet.iter().any(|f| f.name == name) && !m.disc.iter().any(|d| d.name == name) {
-                m.disc.push(Disc { name, ip: format!("10.0.4.{}", 30 + m.scan_n) });
+                m.disc.push(Disc { name, ip: format!("10.0.4.{}", 35 + m.scan_n) });
             }
         }
     });

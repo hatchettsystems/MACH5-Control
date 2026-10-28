@@ -61,11 +61,11 @@ pub fn machine(idx: u32, name: String, ip: String, model: &'static str, group: u
     }
 }
 
-/// Ten Tomahawks running at once, plus two dev benches.
+/// Ten Tomahawks running at once, four idle Tomahawks to play with, plus two dev benches.
 pub fn make_fleet() -> Vec<FleetMachine> {
     use MState::*;
     let ok = Status::Ok;
-    let rows: [(&str, &str, &str, usize, MState, Option<(usize, f32)>, &str, (u8, u8), Status, u8); 12] = [
+    let rows: [(&str, &str, &str, usize, MState, Option<(usize, f32)>, &str, (u8, u8), Status, u8); 16] = [
         ("Tomahawk-01", "10.0.4.21", "Tomahawk", 0, Printing, Some((0, 0.42)), "1.4.2", (13, 13), ok, 2),
         ("Tomahawk-02", "10.0.4.22", "Tomahawk", 0, Printing, Some((2, 0.74)), "1.4.2", (13, 13), ok, 2),
         ("Tomahawk-03", "10.0.4.23", "Tomahawk", 0, Printing, Some((3, 0.91)), "1.4.2", (13, 13), ok, 1),
@@ -76,6 +76,10 @@ pub fn make_fleet() -> Vec<FleetMachine> {
         ("Tomahawk-08", "10.0.4.28", "Tomahawk", 1, Printing, Some((3, 0.08)), "1.4.2", (13, 13), ok, 3),
         ("Tomahawk-09", "10.0.4.29", "Tomahawk", 1, Printing, Some((0, 0.05)), "1.4.2", (13, 13), ok, 3),
         ("Tomahawk-10", "10.0.4.30", "Tomahawk", 1, Printing, Some((5, 0.48)), "1.4.1", (13, 13), ok, 2),
+        ("Tomahawk-11", "10.0.4.31", "Tomahawk", 0, Idle, None, "1.4.2", (13, 13), ok, 3),
+        ("Tomahawk-12", "10.0.4.32", "Tomahawk", 0, Idle, None, "1.4.2", (13, 13), ok, 3),
+        ("Tomahawk-13", "10.0.4.33", "Tomahawk", 1, Idle, None, "1.4.1", (13, 13), ok, 3),
+        ("Tomahawk-14", "10.0.4.34", "Tomahawk", 1, Idle, None, "1.4.1", (13, 13), ok, 3),
         ("Bench-A", "10.0.9.2", "Dev bench", 2, Idle, None, "1.5.0-rc1", (6, 6), ok, 0),
         ("Bench-B", "10.0.9.3", "Dev bench", 2, Idle, None, "1.5.0-rc1", (4, 6), Status::Warn, 0),
     ];
@@ -489,7 +493,7 @@ impl Model {
             (7, Sev::Warn, "Spool low: PLA 118 g left"),
             (1, Sev::Warn, "Hotend deviation 5 C, recovered"),
             (9, Sev::Info, "Print complete: pa_calib_tower.gcode"),
-            (11, Sev::Warn, "Node MMU offline (bench rig)"),
+            (15, Sev::Warn, "Node MMU offline (bench rig)"),
         ] {
             self.alert(i, sev, msg);
         }
