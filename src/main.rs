@@ -1,3 +1,6 @@
+// Release builds on Windows run as a GUI app (no console window).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod data;
 mod pages;
 mod theme;

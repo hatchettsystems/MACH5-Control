@@ -1,0 +1,39 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release exe
+        run: cargo build --release
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
+      - name: Portable exe
+        shell: pwsh
+        run: Copy-Item target\release\mach5-control.exe dist\MACH5-Control.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MACH5-Control-Windows
+          path: |
+            dist/MACH5-Control-Setup.exe
+            dist/MACH5-Control.exe
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MACH5-Control-Setup.exe
+            dist/MACH5-Control.exe
