@@ -100,7 +100,7 @@ pub fn motion(ui: &mut Ui, m: &mut Model) {
                 for p in m.profiles.iter_mut() {
                     ui.label(p.name);
                     ui.add(DragValue::new(&mut p.pa).range(0.0..=0.5).speed(0.001));
-                    if ui.small_button("use").clicked() { m.pa_value = p.pa; }
+                    if crate::ui::sbtn(ui, "use").clicked() { m.pa_value = p.pa; }
                     ui.end_row();
                 }
             });
@@ -180,7 +180,10 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
             ui.columns(2, |c| {
                 panel(&mut c[0], "Bed mesh (um deviation)", |ui| {
                     let b = if m.mesh_adaptive { objects_bounds(m) } else { None };
-                    heatmap(ui, &m.mesh, vec2(ui.available_width().min(460.0), 400.0), (-0.12, 0.12), b);
+                    let (lo, hi) = m.mesh.iter().flatten().fold((9.0f32, -9.0f32), |a, v| (a.0.min(*v), a.1.max(*v)));
+                    heatmap(ui, &m.mesh, vec2(ui.available_width().min(520.0), 440.0), (lo, hi), b, (350.0, 350.0));
+                    ui.add_space(4.0);
+                    ramp_legend(ui, ui.available_width().min(520.0), (lo, hi));
                     ui.label(dim("White outline = adaptive region derived from parsed G-code."));
                 });
                 panel(&mut c[1], "Mesh", |ui| {

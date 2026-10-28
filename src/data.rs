@@ -12,7 +12,7 @@ pub enum Page {
     Motion, Calibration, Probe, Drives,
     Materials, Camera,
     CanBus, Nodes, Firmware,
-    Config, Rules, Api, Fleet, Simulator, Spec, Logs,
+    Builder, Config, Rules, Api, Fleet, Simulator, Spec, Logs,
 }
 
 impl Page {
@@ -21,7 +21,7 @@ impl Page {
         ("Tuning", &[Page::Motion, Page::Calibration, Page::Probe, Page::Drives]),
         ("Materials", &[Page::Materials, Page::Camera]),
         ("Hardware", &[Page::CanBus, Page::Nodes, Page::Firmware]),
-        ("System", &[Page::Fleet, Page::Config, Page::Rules, Page::Api, Page::Simulator, Page::Logs, Page::Spec]),
+        ("System", &[Page::Fleet, Page::Builder, Page::Config, Page::Rules, Page::Api, Page::Simulator, Page::Logs, Page::Spec]),
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -29,7 +29,7 @@ impl Page {
             Page::Thermal => "Thermal", Page::Motion => "Motion", Page::Calibration => "Calibration",
             Page::Probe => "Eddy Probe", Page::Drives => "Drives", Page::Materials => "Filament",
             Page::Camera => "Camera", Page::CanBus => "CAN FD Bus", Page::Nodes => "Nodes",
-            Page::Firmware => "Firmware", Page::Config => "Config", Page::Rules => "Rules",
+            Page::Firmware => "Firmware", Page::Builder => "Config Builder", Page::Config => "Config", Page::Rules => "Rules",
             Page::Api => "API & Security", Page::Fleet => "Fleet", Page::Simulator => "Simulator",
             Page::Spec => "Spec & Roadmap", Page::Logs => "Event Log",
         }
@@ -40,7 +40,7 @@ impl Page {
             Page::Motion => "05", Page::Calibration => "06", Page::Probe => "07", Page::Drives => "08",
             Page::Materials => "09", Page::Camera => "10", Page::CanBus => "11", Page::Nodes => "12",
             Page::Firmware => "13", Page::Fleet => "14", Page::Config => "15", Page::Rules => "16", Page::Api => "17",
-            Page::Simulator => "18", Page::Logs => "19", Page::Spec => "20",
+            Page::Simulator => "18", Page::Logs => "19", Page::Spec => "20", Page::Builder => "21",
         }
     }
 }
@@ -126,6 +126,7 @@ pub struct Spool { pub id: u32, pub brand: &'static str, pub mat: &'static str, 
 pub struct Profile { pub name: &'static str, pub nozzle: f32, pub bed: f32, pub chamber: f32, pub pa: f32, pub flow: f32, pub fan: f32 }
 pub struct Slot { pub spool: Option<u32>, pub sensor: bool }
 
+#[derive(Clone)]
 pub struct FleetMachine {
     pub name: String, pub model: &'static str, pub ip: String, pub group: usize,
     pub state: MState, pub file: String, pub material: &'static str,
@@ -185,6 +186,7 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub led: f32,
     pub farm_tab: usize,
     pub q_file: usize,
     pub q_copies: u32,
@@ -243,6 +245,7 @@ pub struct Model {
     pub decisions: [bool; 8],
     pub phases_done: usize,
     pub rollout: Rollout,
+    pub bld: crate::builder::Builder,
     pub active: usize,
     pub queue: Vec<QJob>,
     pub next_qid: u32,
@@ -424,7 +427,7 @@ impl Model {
             cal: Cal { running: false, step: 0, prog: 0.0 },
             fw: FwRun { running: false, prog: 0.0, idx: 0 },
             sim: Sim { running: false, prog: 0.0, results: Vec::new(), faults: [false; 4], log: Vec::new() },
-            st: St { q_copies: 1, extr_len: 10.0, pa_lo: 0.0, pa_hi: 0.1, tab: 0, ..Default::default() },
+            st: St { led: 60.0, q_copies: 1, extr_len: 10.0, pa_lo: 0.0, pa_hi: 0.1, tab: 0, ..Default::default() },
             h_hot: hot, h_bed: bed, h_cham: cham, h_t_hot: tgt,
             h_can_a: ca, h_can_b: cb, h_follow: fo, h_sync: sy,
             mesh: Vec::new(),
@@ -432,6 +435,7 @@ impl Model {
             pa_value: 0.044,
             probe_driver: 0, probe_comp: true, clear_needed: false,
             decisions: [false; 8], phases_done: 1,
+            bld: crate::builder::Builder::new(),
             rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
             active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: false, auto_pause: true,
             alerts: Vec::new(), fspools: Vec::new(),

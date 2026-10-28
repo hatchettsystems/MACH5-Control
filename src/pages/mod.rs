@@ -1,7 +1,9 @@
 use crate::data::{Model, Page};
 use eframe::egui::Ui;
 
+mod builder;
 mod control;
+mod dashboard;
 mod farm;
 mod hardware;
 mod materials;
@@ -10,7 +12,7 @@ mod tuning;
 
 pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
     match page {
-        Page::Dashboard => control::dashboard(ui, m),
+        Page::Dashboard => dashboard::dashboard(ui, m),
         Page::Control => control::control(ui, m),
         Page::Print => control::print(ui, m),
         Page::Thermal => control::thermal(ui, m),
@@ -23,6 +25,7 @@ pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
         Page::CanBus => hardware::can_bus(ui, m),
         Page::Nodes => hardware::nodes(ui, m),
         Page::Firmware => hardware::firmware(ui, m),
+        Page::Builder => builder::builder(ui, m),
         Page::Config => system::config(ui, m),
         Page::Rules => system::rules(ui, m),
         Page::Api => system::api(ui, m),

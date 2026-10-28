@@ -1,7 +1,9 @@
 // Release builds on Windows run as a GUI app (no console window).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod builder;
 mod data;
+mod icons;
 mod fleetsim;
 mod pages;
 mod theme;
@@ -9,7 +11,7 @@ mod tour;
 mod ui;
 
 use data::{Model, Page};
-use eframe::egui::{self, vec2, Align, Layout, RichText, Sense};
+use eframe::egui::{self, vec2, Align, Color32, Layout, RichText, Sense};
 use theme::*;
 
 struct App {
@@ -22,7 +24,7 @@ struct App {
 fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1440.0, 900.0])
+            .with_inner_size(std::env::var("MACH5_SIZE").ok().and_then(|s| { let (w, h) = s.split_once('x')?; Some([w.parse().ok()?, h.parse().ok()?]) }).unwrap_or([1440.0, 900.0]))
             .with_min_inner_size([960.0, 600.0])
             .with_title("MACH5 Management Interface"),
         ..Default::default()
@@ -44,6 +46,9 @@ fn main() -> eframe::Result {
             // Optional extra args pre-select tabs: `mach5-control calibration 3 0`
             m.st.tab = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0);
             m.st.farm_tab = m.st.tab;
+            if std::env::var("MACH5_EXPAND").is_ok() {
+                m.bld.force_open = Some(true);
+            }
             m.st.tab2 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
             let tour = if std::env::args().nth(1).as_deref() == Some("tour") {
                 Some(tour::Tour::new(std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0), page, true))
@@ -156,12 +161,13 @@ impl App {
                 });
                 for p in pages.iter() {
                     let sel = self.page == *p;
-                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
                     let fill = if sel { C_SEL } else if resp.hovered() { RAISED } else { egui::Color32::TRANSPARENT };
                     ui.painter().rect_filled(rect.shrink2(vec2(6.0, 0.0)), crate::theme::RAD, fill);
                     let col = if sel { WHITE } else { TEXT };
-                    ui.painter().text(rect.left_center() + vec2(16.0, 0.0), egui::Align2::LEFT_CENTER, p.key(), egui::FontId::monospace(10.5), FAINT);
-                    ui.painter().text(rect.left_center() + vec2(42.0, 0.0), egui::Align2::LEFT_CENTER, p.title(), egui::FontId::proportional(13.5), col);
+                    let icol = if sel { ACCENT } else if resp.hovered() { WHITE } else { DIM };
+                    icons::draw(&ui.painter().clone(), *p, rect.left_center() + vec2(26.0, 0.0), icol);
+                    ui.painter().text(rect.left_center() + vec2(46.0, 0.0), egui::Align2::LEFT_CENTER, p.title(), egui::FontId::proportional(13.5), col);
                     if let Some(a) = nav_alert(&self.m, *p) {
                         let (st, _) = a;
                         ui.painter().rect_filled(egui::Rect::from_center_size(rect.right_center() - vec2(20.0, 0.0), vec2(7.0, 7.0)), crate::theme::RAD, st.color());
@@ -182,7 +188,6 @@ impl App {
                 if ui::primary(ui, "Tutorial") {
                     self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
                 }
-                ui.label(ui::dim("Ctrl+B"));
             });
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
@@ -213,8 +218,7 @@ const GLYPHS: [[&str; 7]; 5] = [
     ["10001", "10001", "10001", "11111", "10001", "10001", "10001"], // H
     ["11111", "10000", "11110", "00001", "00001", "10001", "01110"], // 5
 ];
-const RAMP: [&str; 10] = [".", ":", "-", "=", "+", "*", "x", "#", "%", "@"];
-const FIELD: [&str; 6] = [".", ".", ":", "'", "`", "+"];
+const DIGITS: [&str; 10] = [".", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 fn hash(x: i32, y: i32, s: u32) -> u32 {
     let mut h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA77) ^ s.wrapping_mul(0xC2B2_AE3D);
@@ -227,8 +231,9 @@ fn unit(h: u32) -> f32 {
     (h & 0xFFFF) as f32 / 65535.0
 }
 
-/// Dark ASCII field with a MACH5 logo. Every few seconds something fast flies
-/// past and leaves a rippling, fading wake of turbulence in the characters.
+/// Dark screen. Characters exist only inside turbulence: every ~24 s something fast flies by
+/// and its wake lights up digits (peaking at 9) that ripple outward and fade. Cells that make
+/// up the MACH5 logo linger much longer, so the logo is revealed as the wake crosses it.
 fn paint_background(ctx: &egui::Context) {
     let t = ctx.input(|i| i.time) as f32;
     let screen = ctx.screen_rect();
@@ -240,7 +245,6 @@ fn paint_background(ctx: &egui::Context) {
     let rows = (screen.height() / ch).ceil() as i32;
     let font = egui::FontId::monospace(12.0);
 
-    // Logo placement (in cells).
     let wide = screen.width() >= 1250.0;
     let (sx, sy) = if wide { (3, 2) } else { (2, 1) };
     let logo_w = 5 * 5 * sx + 4 * sx;
@@ -259,69 +263,65 @@ fn paint_background(ctx: &egui::Context) {
         GLYPHS[g as usize][(y / sy) as usize].as_bytes()[(px % 6) as usize] == b'1'
     };
 
-    // Fly-bys: event n starts at n * PERIOD, crosses the screen in about a second.
-    const PERIOD: f32 = 6.5;
-    const LIFE: f32 = 8.0;
+    // Fly-bys: first one shortly after launch, then one every PERIOD seconds.
+    const PERIOD: f32 = 24.0;
+    const FIRST: f32 = 3.0;
+    const LIFE: f32 = 18.0;
     struct Fly { start: egui::Pos2, dir: egui::Vec2, speed: f32, tau: f32 }
     let mut flies: Vec<Fly> = Vec::new();
-    let n_now = (t / PERIOD).floor() as i32;
+    let n_now = ((t - FIRST) / PERIOD).floor() as i32;
     for n in (n_now - 1).max(0)..=n_now {
-        let tau = t - n as f32 * PERIOD;
+        let tau = t - (FIRST + n as f32 * PERIOD);
         if !(0.0..LIFE).contains(&tau) {
             continue;
         }
         let h = hash(n, 7, 11);
         let from_left = h & 1 == 0;
-        let y0 = screen.height() * (0.12 + 0.76 * unit(hash(n, 1, 3)));
-        let slope = (unit(hash(n, 2, 5)) - 0.5) * 0.9;
+        let y0 = screen.height() * (0.18 + 0.64 * unit(hash(n, 1, 3)));
+        let slope = (unit(hash(n, 2, 5)) - 0.5) * 0.7;
         let dir = egui::vec2(if from_left { 1.0 } else { -1.0 }, slope).normalized();
         let x0 = if from_left { -120.0 } else { screen.width() + 120.0 };
         flies.push(Fly { start: egui::pos2(x0, y0), dir, speed: 1500.0, tau });
+    }
+    if flies.is_empty() {
+        return;
     }
 
     let frame = (t * 14.0) as i32;
     for r in 0..rows {
         for c in 0..cols {
             let p = egui::pos2(c as f32 * cw + cw * 0.5, r as f32 * ch + ch * 0.5);
+            let logo = in_logo(c, r);
+            let decay = if logo { 7.0 } else { 1.8 };
             let mut b = 0.0_f32;
             for f in &flies {
                 let rel = p - f.start;
                 let s = rel.dot(f.dir);
-                let d = (rel.x * f.dir.y - rel.y * f.dir.x).abs();
                 let tpass = s / f.speed;
-                if tpass > f.tau {
+                if tpass < 0.0 || tpass > f.tau {
                     continue;
                 }
-                if tpass < 0.0 {
-                    continue;
-                }
+                let d = (rel.x * f.dir.y - rel.y * f.dir.x).abs();
                 let age = f.tau - tpass;
-                let env = (-age / 2.4).exp() * (-(d / (70.0 + age * 110.0)).powi(2)).exp();
+                let env = (-age / decay).exp() * (-(d / (46.0 + age * 70.0)).powi(2)).exp();
                 let ring = 0.5 + 0.5 * (d / 15.0 - age * 7.0).sin();
                 b += env * (0.25 + 0.75 * ring);
-                // Bright head just behind the object itself.
                 if age < 0.06 && d < 26.0 {
                     b += 1.0 - d / 26.0;
                 }
             }
-            let logo = in_logo(c, r);
-            let noise = unit(hash(c, r, 1));
-            b = (b * (0.75 + 0.25 * unit(hash(c, r, frame as u32)))).clamp(0.0, 1.0);
-            let breathe = 0.5 + 0.5 * (t * 0.35 + c as f32 * 0.05).sin();
-            let base = if logo { 46.0 + 12.0 * breathe } else { 9.0 + 5.0 * noise };
-            let a = (base + b * 130.0).min(150.0);
-            if a < 7.0 {
+            if logo {
+                b *= 1.5;
+            }
+            b = (b * (0.78 + 0.22 * unit(hash(c, r, frame as u32)))).clamp(0.0, 1.0);
+            if b < 0.07 {
                 continue;
             }
-            let a = ((a / 8.0).round() * 8.0) as u8;
-            let ch_str = if b > 0.07 {
-                RAMP[((b * 9.0 + noise * 2.0) as usize).min(9)]
-            } else if logo {
-                "#"
-            } else {
-                FIELD[(hash(c, r, 2) % 6) as usize]
-            };
-            painter.text(p, egui::Align2::CENTER_CENTER, ch_str, font.clone(), egui::Color32::from_white_alpha(a));
+            let idx = ((b * 9.0 + unit(hash(c, r, 1)) * 1.6) as usize).min(9);
+            let s = if logo && b > 0.2 { "9" } else { DIGITS[idx] };
+            let a = (24.0 + b * 80.0) as u8;
+            let col = if idx == 9 || (logo && b > 0.2) { Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), a) } else { Color32::from_white_alpha(a) };
+            painter.text(p, egui::Align2::CENTER_CENTER, s, font.clone(), col);
         }
     }
 }

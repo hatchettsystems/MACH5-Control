@@ -54,21 +54,44 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
 }
 
+/// Compact button for tables and rows: still sized to its text, never clipped.
+pub fn sbtn(ui: &mut Ui, t: &str) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = vec2(11.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.0)).min_size(vec2(0.0, 24.0)))
+    })
+    .inner
+}
+
+pub fn accent_bar(ui: &mut Ui, frac: f32, w: f32) {
+    let (r, _) = ui.allocate_exact_size(vec2(w, 8.0), Sense::hover());
+    ui.painter().rect_filled(r, 4.0, Color32::from_gray(10));
+    ui.painter().rect_stroke(r, 4.0, Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+    let fr = Rect::from_min_size(r.min, vec2(r.width() * frac.clamp(0.0, 1.0), r.height()));
+    ui.painter().rect_filled(fr.shrink(1.0), 3.0, ACCENT);
+}
+
 pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
     let r = ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().button_padding = vec2(14.0, 6.0);
         for (i, n) in names.iter().enumerate() {
             let sel = *cur == i;
-            let b = Button::new(RichText::new(*n).color(if sel { BG } else { TEXT }))
-                .fill(if sel { WHITE } else { Color32::TRANSPARENT })
-                .stroke(Stroke::new(1.0_f32, if sel { WHITE } else { LINE }));
-            if ui.add(b).clicked() {
+            let col = if sel { WHITE } else { DIM };
+            let resp = ui.add(Button::new(RichText::new(*n).color(col).size(13.5)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).min_size(vec2(0.0, 30.0)));
+            if sel {
+                let y = resp.rect.bottom();
+                ui.painter().line_segment([egui::pos2(resp.rect.left() + 8.0, y), egui::pos2(resp.rect.right() - 8.0, y)], Stroke::new(2.0_f32, ACCENT));
+            }
+            if resp.clicked() {
                 *cur = i;
             }
         }
     });
     set_anchor(ui.ctx(), "tabs", r.response.rect);
-    ui.add_space(8.0);
+    let y = r.response.rect.bottom();
+    ui.painter().line_segment([egui::pos2(r.response.rect.left(), y), egui::pos2(ui.max_rect().right(), y)], Stroke::new(1.0_f32, LINE));
+    ui.add_space(10.0);
 }
 
 pub fn primary(ui: &mut Ui, t: &str) -> bool {
@@ -191,30 +214,101 @@ pub const G1: Color32 = Color32::from_gray(245);
 pub const G2: Color32 = Color32::from_gray(170);
 pub const G3: Color32 = Color32::from_gray(105);
 
-/// Grayscale heat map. `bounds` is an optional highlighted region (fractions).
-pub fn heatmap(ui: &mut Ui, data: &[Vec<f32>], size: egui::Vec2, range: (f32, f32), bounds: Option<(f32, f32, f32, f32)>) {
-    let (r, _) = ui.allocate_exact_size(size, Sense::hover());
-    let p = ui.painter_at(r);
-    p.rect_filled(r, crate::theme::RAD, Color32::BLACK);
-    let rows = data.len().max(1);
-    let cols = data.first().map(|d| d.len()).unwrap_or(1).max(1);
-    let (cw, ch) = (r.width() / cols as f32, r.height() / rows as f32);
-    for (j, row) in data.iter().enumerate() {
-        for (i, v) in row.iter().enumerate() {
-            let t = ((v - range.0) / (range.1 - range.0)).clamp(0.0, 1.0);
-            let g = (30.0 + t * 200.0) as u8;
-            let c = Rect::from_min_size(r.min + vec2(i as f32 * cw, j as f32 * ch), vec2(cw, ch));
-            p.rect_filled(c.shrink(0.5), crate::theme::RAD, Color32::from_gray(g));
-            if cw > 34.0 {
-                p.text(c.center(), Align2::CENTER_CENTER, format!("{:+.0}", v * 1000.0), FontId::monospace(9.0), if g > 130 { Color32::BLACK } else { Color32::from_gray(200) });
-            }
+fn lerp_c(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+/// Gradient used for the mesh: near-black, deep blue, accent, white.
+pub fn ramp(t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let stops = [(0.0, Color32::from_rgb(10, 12, 18)), (0.4, Color32::from_rgb(26, 70, 112)), (0.75, ACCENT), (1.0, Color32::WHITE)];
+    for w in stops.windows(2) {
+        if t <= w[1].0 {
+            return lerp_c(w[0].1, w[1].1, (t - w[0].0) / (w[1].0 - w[0].0));
         }
     }
+    Color32::WHITE
+}
+
+/// Smoothly interpolated value of a grid at fractional position (u, v in 0..1).
+pub fn sample_grid(data: &[Vec<f32>], u: f32, v: f32) -> f32 {
+    let rows = data.len();
+    let cols = data.first().map(|d| d.len()).unwrap_or(0);
+    if rows < 2 || cols < 2 {
+        return 0.0;
+    }
+    let (gx, gy) = (u.clamp(0.0, 1.0) * (cols - 1) as f32, v.clamp(0.0, 1.0) * (rows - 1) as f32);
+    let (x0, y0) = ((gx.floor() as usize).min(cols - 2), (gy.floor() as usize).min(rows - 2));
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let (fx, fy) = (ease(gx - x0 as f32), ease(gy - y0 as f32));
+    let top = data[y0][x0] * (1.0 - fx) + data[y0][x0 + 1] * fx;
+    let bot = data[y0 + 1][x0] * (1.0 - fx) + data[y0 + 1][x0 + 1] * fx;
+    top * (1.0 - fy) + bot * fy
+}
+
+/// Smooth gradient heat map. Hovering reports the bed coordinate and the height there.
+/// `bounds` is an optional highlighted region (fractions); `bed` is the bed size in mm.
+pub fn heatmap(ui: &mut Ui, data: &[Vec<f32>], size: egui::Vec2, range: (f32, f32), bounds: Option<(f32, f32, f32, f32)>, bed: (f32, f32)) {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+    let (r, resp) = ui.allocate_exact_size(size, Sense::hover());
+    let p = ui.painter_at(r);
+    p.rect_filled(r, RAD, Color32::BLACK);
+    const N: usize = 56;
+    let mut mesh = Mesh::default();
+    for j in 0..=N {
+        for i in 0..=N {
+            let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+            let t = (sample_grid(data, u, v) - range.0) / (range.1 - range.0);
+            mesh.vertices.push(Vertex { pos: r.min + vec2(u * r.width(), v * r.height()), uv: WHITE_UV, color: ramp(t) });
+        }
+    }
+    for j in 0..N {
+        for i in 0..N {
+            let a = (j * (N + 1) + i) as u32;
+            let b = a + 1;
+            let c = a + (N + 1) as u32;
+            let d = c + 1;
+            mesh.indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
     if let Some((x0, y0, x1, y1)) = bounds {
         let b = Rect::from_min_max(r.min + vec2(x0 * r.width(), y0 * r.height()), r.min + vec2(x1 * r.width(), y1 * r.height()));
-        p.rect_stroke(b, crate::theme::RAD, Stroke::new(2.0_f32, Color32::WHITE), StrokeKind::Inside);
+        p.rect_stroke(b, 2.0, Stroke::new(1.5_f32, Color32::WHITE), StrokeKind::Inside);
     }
-    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
+    p.rect_stroke(r, RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
+    if r.width() > 120.0 {
+        for k in 0..=4 {
+            let f = k as f32 / 4.0;
+            p.text(r.left_bottom() + vec2(f * r.width(), -2.0), if k == 0 { Align2::LEFT_BOTTOM } else if k == 4 { Align2::RIGHT_BOTTOM } else { Align2::CENTER_BOTTOM }, format!("{:.0}", f * bed.0), FontId::monospace(9.0), Color32::from_white_alpha(140));
+            p.text(r.left_top() + vec2(3.0, f * r.height()), if k == 0 { Align2::LEFT_TOP } else if k == 4 { Align2::LEFT_BOTTOM } else { Align2::LEFT_CENTER }, format!("{:.0}", f * bed.1), FontId::monospace(9.0), Color32::from_white_alpha(140));
+        }
+    }
+    if let Some(pos) = resp.hover_pos() {
+        let (u, v) = (((pos.x - r.left()) / r.width()).clamp(0.0, 1.0), ((pos.y - r.top()) / r.height()).clamp(0.0, 1.0));
+        let z = sample_grid(data, u, v);
+        let s = Stroke::new(1.0_f32, Color32::from_white_alpha(170));
+        p.line_segment([egui::pos2(pos.x, r.top()), egui::pos2(pos.x, r.bottom())], s);
+        p.line_segment([egui::pos2(r.left(), pos.y), egui::pos2(r.right(), pos.y)], s);
+        p.circle_stroke(pos, 5.0, Stroke::new(1.5_f32, Color32::WHITE));
+        resp.on_hover_text(format!("X {:.1} mm   Y {:.1} mm\nZ {:+.3} mm  ({:+.0} um)", u * bed.0, v * bed.1, z, z * 1000.0));
+    }
+}
+
+/// Legend strip for `ramp`.
+pub fn ramp_legend(ui: &mut Ui, w: f32, range: (f32, f32)) {
+    let (r, _) = ui.allocate_exact_size(vec2(w, 10.0), Sense::hover());
+    let n = 48;
+    for i in 0..n {
+        let seg = Rect::from_min_size(r.min + vec2(i as f32 / n as f32 * w, 0.0), vec2(w / n as f32 + 0.5, 10.0));
+        ui.painter().rect_filled(seg, 0.0, ramp(i as f32 / (n - 1) as f32));
+    }
+    ui.horizontal(|ui| {
+        ui.label(dim(format!("{:+.3} mm", range.0)));
+        ui.add_space((w - 130.0).max(0.0));
+        ui.label(dim(format!("{:+.3} mm", range.1)));
+    });
 }
 
 pub fn fmt_dur(secs: f32) -> String {

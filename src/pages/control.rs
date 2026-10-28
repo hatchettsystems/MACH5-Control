@@ -3,7 +3,7 @@ use crate::theme::*;
 use crate::ui::*;
 use eframe::egui::{self, vec2, Align2, Color32, DragValue, FontId, RichText, Sense, Stroke, StrokeKind, Ui};
 
-fn state_actions(ui: &mut Ui, m: &mut Model) {
+pub fn state_actions(ui: &mut Ui, m: &mut Model) {
     ui.horizontal(|ui| match m.state {
         MState::Printing => {
             if button(ui, "Pause") {
@@ -38,138 +38,6 @@ fn state_actions(ui: &mut Ui, m: &mut Model) {
     });
 }
 
-pub fn dashboard(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Dashboard", &format!("{} - live telemetry, mock data", m.name));
-    ui.columns(3, |c| {
-        panel(&mut c[0], "Job", |ui| {
-            ui.label(mono(m.job.file.clone()).color(WHITE));
-            ui.add_space(2.0);
-            bar_full(ui, m.job.progress, None);
-            let rem = m.job.total - m.job.elapsed;
-            kv(ui, "dash_job", &[
-                ("Progress", format!("{:.1} %", m.job.progress * 100.0)),
-                ("Layer", format!("{} / {}", m.job.layer, m.job.layers)),
-                ("Elapsed", fmt_dur(m.job.elapsed)),
-                ("Remaining", fmt_dur(rem)),
-                ("Objects", format!("{} active / {} total", m.job.objects.iter().filter(|o| !o.excluded).count(), m.job.objects.len())),
-            ]);
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(dim("Speed"));
-                ui.add(DragValue::new(&mut m.job.speed).range(20.0..=300.0).suffix(" %"));
-                ui.label(dim("Flow"));
-                ui.add(DragValue::new(&mut m.job.flow).range(80.0..=120.0).suffix(" %"));
-            });
-            ui.add_space(4.0);
-            state_actions(ui, m);
-        });
-        panel(&mut c[1], "Temperatures", |ui| {
-            egui::Grid::new("dash_temps").num_columns(4).spacing([14.0, 6.0]).show(ui, |ui| {
-                for h in &m.heaters {
-                    ui.label(dim(h.name));
-                    ui.label(mono(format!("{:6.1}", h.cur)).size(15.0).color(WHITE));
-                    ui.label(mono(format!("/ {:.0} C", h.target)).color(DIM));
-                    bar(ui, h.power / 100.0, 60.0, None);
-                    ui.end_row();
-                }
-            });
-            ui.add_space(6.0);
-            ui.label(dim("Bar = heater output. Cutoff limits are enforced on the STM32 and the node itself."));
-        });
-        panel(&mut c[2], "Position", |ui| {
-            egui::Grid::new("dash_pos").num_columns(3).spacing([14.0, 4.0]).show(ui, |ui| {
-                for (k, (ax, v)) in [("X", m.pos[0]), ("Y", m.pos[1]), ("Z", m.pos[2]), ("E", m.pos[3])].iter().enumerate() {
-                    ui.label(dim(*ax));
-                    ui.label(mono(format!("{:8.2}", v)).size(15.0).color(WHITE));
-                    if k < 3 {
-                        status(ui, if m.home[k] { Status::Ok } else { Status::Warn }, if m.home[k] { "homed" } else { "not homed" });
-                    }
-                    ui.end_row();
-                }
-            });
-            ui.add_space(4.0);
-            kv(ui, "dash_mot", &[
-                ("Velocity", format!("{:.0} mm/s", 180.0 * m.job.speed / 100.0)),
-                ("Accel limit", format!("{:.0} mm/s2", m.accel[0])),
-                ("Shaper X/Y", format!("{} {:.1} / {} {:.1} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq, SHAPERS[m.shapers[1].kind], m.shapers[1].freq)),
-                ("Pressure adv.", format!("{:.3} s", m.pa_value)),
-            ]);
-        });
-    });
-
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Thermal history (60 s)", |ui| {
-            plot(ui, 170.0, &[
-                Series::from_ring("hotend", G1, &m.h_hot),
-                Series::from_ring("target", G3, &m.h_t_hot).dashed(),
-                Series::from_ring("bed", G2, &m.h_bed),
-                Series::from_ring("chamber", G3, &m.h_cham),
-            ], (0.0, HIST as f32), (0.0, 300.0), "deg C");
-        });
-        panel(&mut c[1], "Safety", |ui| {
-            let sync = *m.h_sync.back().unwrap_or(&0.0);
-            let nodes_ok = m.nodes.iter().filter(|n| matches!(n.status, Status::Ok | Status::Idle)).count();
-            egui::Grid::new("dash_safe").num_columns(2).spacing([20.0, 5.0]).show(ui, |ui| {
-                ui.label(dim("Heater watchdog (STM32)"));
-                status(ui, Status::Ok, "armed, 0 trips");
-                ui.end_row();
-                ui.label(dim("Node heartbeats"));
-                status(ui, if nodes_ok == m.nodes.len() { Status::Ok } else { Status::Warn }, &format!("{}/{} responding", nodes_ok, m.nodes.len()));
-                ui.end_row();
-                ui.label(dim("Master time sync"));
-                status(ui, if sync < 80.0 { Status::Ok } else { Status::Warn }, &format!("skew {:.0} us (limit 100)", sync));
-                ui.end_row();
-                ui.label(dim("Drive faults"));
-                status(ui, if m.state == MState::Fault { Status::Err } else { Status::Ok }, if m.state == MState::Fault { "latched" } else { "none" });
-                ui.end_row();
-                ui.label(dim("Power-loss checkpoint"));
-                status(ui, Status::Ok, &format!("layer {}", m.job.layer));
-                ui.end_row();
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(m.clear_needed || m.state == MState::Fault, |ui| {
-                    if button(ui, "Clear faults") {
-                        m.clear_faults();
-                    }
-                });
-                ui.label(dim("Nodes never clear a fault without a Host command."));
-            });
-        });
-    });
-
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Node health", |ui| {
-            egui::Grid::new("dash_nodes").num_columns(4).spacing([18.0, 4.0]).show(ui, |ui| {
-                for (k, n) in m.nodes.iter().enumerate() {
-                    status(ui, n.status, n.name);
-                    ui.label(dim(n.seg.label()));
-                    ui.label(mono(format!("{:.1} Hz", n.hb)));
-                    if ui.small_button("open").clicked() {
-                        m.st.sel_node = k;
-                        m.goto = Some(Page::Nodes);
-                    }
-                    ui.end_row();
-                }
-            });
-        });
-        panel(&mut c[1], "Recent events", |ui| {
-            for l in m.logs.iter().rev().take(9) {
-                ui.horizontal(|ui| {
-                    ui.label(mono(l.ts.clone()).color(FAINT));
-                    let st = match l.sev { Sev::Info => Status::Idle, Sev::Warn => Status::Warn, Sev::Err => Status::Err };
-                    dot(ui, st);
-                    ui.label(dim(l.src.clone()));
-                    ui.label(l.msg.clone());
-                });
-            }
-            if button(ui, "Open event log") {
-                m.goto = Some(Page::Logs);
-            }
-        });
-    });
-}
-
 pub const SHAPERS: [&str; 5] = ["ZV", "MZV", "ZVD", "EI", "2HUMP_EI"];
 
 pub fn control(ui: &mut Ui, m: &mut Model) {
@@ -187,7 +55,7 @@ pub fn control(ui: &mut Ui, m: &mut Model) {
             });
             let st = steps[m.st.step];
             ui.add_space(6.0);
-            let bs = vec2(54.0, 30.0);
+            let bs = vec2(76.0, 34.0);
             ui.horizontal(|ui| {
                 egui::Grid::new("jog_xy").spacing([4.0, 4.0]).show(ui, |ui| {
                     ui.label("");
@@ -235,7 +103,7 @@ pub fn control(ui: &mut Ui, m: &mut Model) {
                     ui.label(dim(h.name));
                     ui.label(mono(format!("{:.1}", h.cur)).color(WHITE));
                     ui.add(DragValue::new(&mut h.target).range(0.0..=h.max).suffix(" C"));
-                    if ui.small_button("off").clicked() { h.target = 0.0; }
+                    if crate::ui::sbtn(ui, "off").clicked() { h.target = 0.0; }
                     ui.end_row();
                 }
             });
@@ -243,7 +111,7 @@ pub fn control(ui: &mut Ui, m: &mut Model) {
             ui.horizontal(|ui| {
                 ui.label(dim("Preset"));
                 for p in m.profiles.iter() {
-                    if ui.small_button(p.name).clicked() {
+                    if crate::ui::sbtn(ui, p.name).clicked() {
                         m.heaters[0].target = p.nozzle;
                         m.heaters[1].target = p.bed;
                         m.heaters[2].target = p.chamber;
@@ -293,7 +161,7 @@ pub fn control(ui: &mut Ui, m: &mut Model) {
     });
 }
 
-fn run_cmd(m: &mut Model, cmd: &str) {
+pub fn run_cmd(m: &mut Model, cmd: &str) {
     m.st.console.push(format!("> {}", cmd));
     let up = cmd.to_uppercase();
     let num = |p: &str| up.split_whitespace().find_map(|w| w.strip_prefix(p)).and_then(|v| v.parse::<f32>().ok());
@@ -421,7 +289,7 @@ pub fn print(ui: &mut Ui, m: &mut Model) {
                     ui.label(mono(o.name));
                     ui.label(mono(format!("{:.0} x {:.0}", o.w, o.h)));
                     let lbl = if o.excluded { "Restore" } else { "Exclude" };
-                    if ui.small_button(lbl).clicked() { o.excluded = !o.excluded; }
+                    if crate::ui::sbtn(ui, lbl).clicked() { o.excluded = !o.excluded; }
                     ui.end_row();
                 }
             });

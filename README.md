@@ -38,7 +38,7 @@ Analytics (utilisation, throughput) and Roll-out & discovery (staged firmware wi
 
 ## Tutorial
 
-Click **Tutorial** at the bottom of the sidebar (or press F1) for a 40-step guided tour. It navigates the
+Click **Tutorial** at the bottom of the sidebar (or press F1) for a guided tour. It navigates the
 app, spotlights the real on-screen element for each step with an animated pointer, and runs short live
 demos (machine switch, object exclusion, firmware flash, failure alert, roll-out, simulation).
 Arrow keys move between steps, Esc exits. `cargo run -- tour 12` starts at step 12.

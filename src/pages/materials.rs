@@ -208,7 +208,7 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
                     ui.end_row();
                     for (j, f, l) in [("benchy_calib", "62", "0:04"), ("enclosure_panel_left", "318", "0:21"), ("gear_train_x6", "205", "0:14")] {
                         ui.label(j); ui.label(mono(f)); ui.label(mono(l));
-                        ui.horizontal(|ui| { let _ = ui.small_button("view"); let _ = ui.small_button("export"); });
+                        ui.horizontal(|ui| { let _ = crate::ui::sbtn(ui, "view"); let _ = crate::ui::sbtn(ui, "export"); });
                         ui.end_row();
                     }
                 });

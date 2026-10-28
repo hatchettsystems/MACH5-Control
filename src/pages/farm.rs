@@ -69,10 +69,10 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 for (k, g) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.grp_filter, k + 1, *g); }
             });
             ui.label(dim("Select"));
-            if ui.small_button("all").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i); } }
-            if ui.small_button("none").clicked() { m.fleet.iter_mut().for_each(|f| f.sel = false); }
-            if ui.small_button("printing").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Printing; } }
-            if ui.small_button("idle").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Idle; } }
+            if crate::ui::sbtn(ui, "all").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i); } }
+            if crate::ui::sbtn(ui, "none").clicked() { m.fleet.iter_mut().for_each(|f| f.sel = false); }
+            if crate::ui::sbtn(ui, "printing").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Printing; } }
+            if crate::ui::sbtn(ui, "idle").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Idle; } }
         });
         let sel: Vec<usize> = (0..m.fleet.len()).filter(|i| m.fleet[*i].sel).collect();
         ui.horizontal_wrapped(|ui| {
@@ -104,9 +104,10 @@ fn overview(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Machines (live)", |ui| {
         let mut acts: Vec<(usize, u8)> = Vec::new();
         let act = m.active;
-        egui::Grid::new("fleet_tbl").num_columns(13).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
+        egui::ScrollArea::horizontal().id_salt("fleet_tbl_scroll").auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new("fleet_tbl").num_columns(11).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label("");
-            for h in ["Name", "Group", "State", "Job", "Progress", "ETA", "Hotend / bed", "Mat.", "FW", "Nodes", "Health", ""] { th(ui, h); }
+            for h in ["Name", "Group", "State", "Job", "Progress", "ETA", "Hotend / bed", "FW", "Health", ""] { th(ui, h); }
             ui.end_row();
             for i in 0..m.fleet.len() {
                 if !in_group(m, i) { continue; }
@@ -119,21 +120,20 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 ui.horizontal(|ui| { bar(ui, f.prog, 56.0, None); ui.label(mono(format!("{:3.0}%", f.prog * 100.0))); });
                 ui.label(mono(if f.state == MState::Printing { fmt_dur(eta(f)) } else { "-".into() }));
                 ui.label(mono(format!("{:.0}/{:.0}  {:.0}/{:.0}", f.temps[0], f.targets[0], f.temps[1], f.targets[1])));
-                ui.label(mono(if f.file.is_empty() { "-" } else { f.material }));
                 ui.label(mono(f.fw.clone()).color(if f.fw == TARGET_FW { WHITE } else { TEXT }));
-                ui.label(mono(format!("{}/{}", f.nodes.0, f.nodes.1)).color(if f.nodes.0 < f.nodes.1 { WARN } else { TEXT }));
-                status(ui, f.health, f.health.label());
+                status(ui, f.health, &if f.nodes.0 < f.nodes.1 { format!("{}/{} nodes", f.nodes.0, f.nodes.1) } else { f.health.label().to_string() });
                 ui.horizontal(|ui| {
-                    if ui.small_button("open").clicked() { acts.push((i, 1)); }
+                    if crate::ui::sbtn(ui, "open").clicked() { acts.push((i, 1)); }
                     match f.state {
-                        MState::Printing => { if ui.small_button("pause").clicked() { acts.push((i, 2)); } }
-                        MState::Paused => { if ui.small_button("resume").clicked() { acts.push((i, 3)); } }
-                        MState::Fault => { if ui.small_button("clear").clicked() { acts.push((i, 4)); } }
+                        MState::Printing => { if crate::ui::sbtn(ui, "pause").clicked() { acts.push((i, 2)); } }
+                        MState::Paused => { if crate::ui::sbtn(ui, "resume").clicked() { acts.push((i, 3)); } }
+                        MState::Fault => { if crate::ui::sbtn(ui, "clear").clicked() { acts.push((i, 4)); } }
                         _ => {}
                     }
                 });
                 ui.end_row();
             }
+        });
         });
         for (i, a) in acts {
             match a {
@@ -250,10 +250,10 @@ fn queue(ui: &mut Ui, m: &mut Model) {
                     None => ui.label(dim("waiting")),
                 };
                 ui.horizontal(|ui| {
-                    if ui.small_button("up").clicked() { act = Some((k, 0)); }
-                    if ui.small_button("down").clicked() { act = Some((k, 1)); }
-                    if ui.small_button("prio+").clicked() { act = Some((k, 2)); }
-                    if ui.small_button("remove").clicked() { act = Some((k, 3)); }
+                    if crate::ui::sbtn(ui, "up").clicked() { act = Some((k, 0)); }
+                    if crate::ui::sbtn(ui, "down").clicked() { act = Some((k, 1)); }
+                    if crate::ui::sbtn(ui, "prio+").clicked() { act = Some((k, 2)); }
+                    if crate::ui::sbtn(ui, "remove").clicked() { act = Some((k, 3)); }
                 });
                 ui.end_row();
             }
@@ -271,7 +271,7 @@ fn queue(ui: &mut Ui, m: &mut Model) {
 }
 
 /// Animated placeholder camera view driven by the machine's live state.
-fn cam_tile(ui: &mut Ui, f: &FleetMachine, t: f32, w: f32, seed: f32, current: bool) -> egui::Response {
+pub fn cam_tile(ui: &mut Ui, f: &FleetMachine, t: f32, w: f32, seed: f32, current: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(w, w * 0.62), Sense::click());
     let p = ui.painter_at(r);
     p.rect_filled(r, RAD, Color32::from_gray(7));
@@ -357,8 +357,8 @@ fn alerts(ui: &mut Ui, m: &mut Model) {
                 ui.label(m.fleet.get(a.machine).map(|f| f.name.clone()).unwrap_or_default());
                 match a.sev { Sev::Info => status(ui, Status::Idle, "info"), Sev::Warn => status(ui, Status::Warn, "warn"), Sev::Err => status(ui, Status::Err, "error") }
                 wrap(ui, 520.0, if a.ack { dim(a.msg.clone()) } else { RichText::new(a.msg.clone()) });
-                if a.ack { ui.label(dim("acked")); } else if ui.small_button("ack").clicked() { act = Some((k, 0)); }
-                if ui.small_button("open").clicked() { act = Some((k, 1)); }
+                if a.ack { ui.label(dim("acked")); } else if crate::ui::sbtn(ui, "ack").clicked() { act = Some((k, 0)); }
+                if crate::ui::sbtn(ui, "open").clicked() { act = Some((k, 1)); }
                 ui.end_row();
             }
         });
@@ -408,9 +408,9 @@ fn spools(ui: &mut Ui, m: &mut Model) {
                     ui.horizontal(|ui| { bar(ui, s.left / s.total, 70.0, if s.left < m.low_thr { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left))); });
                     ui.label(match s.machine { Some(i) => m.fleet.get(i).map(|f| f.name.clone()).unwrap_or_default(), None => "stock".into() });
                     ui.horizontal(|ui| {
-                        if s.left < m.low_thr && ui.small_button("replace").clicked() { act = Some((k, 0, 0)); }
+                        if s.left < m.low_thr && crate::ui::sbtn(ui, "replace").clicked() { act = Some((k, 0, 0)); }
                         if s.machine.is_some() {
-                            if ui.small_button("to stock").clicked() { act = Some((k, 1, 0)); }
+                            if crate::ui::sbtn(ui, "to stock").clicked() { act = Some((k, 1, 0)); }
                         } else {
                             ui.menu_button("assign", |ui| {
                                 for (i, f) in m.fleet.iter().enumerate().filter(|(_, f)| f.group != 2) {
@@ -539,7 +539,7 @@ fn rollout(ui: &mut Ui, m: &mut Model) {
             ui.horizontal(|ui| {
                 ui.label(mono(format!("{}  {}", d.name, d.ip)));
                 ui.label(dim("unpaired"));
-                if ui.small_button("Pair").clicked() { pair = Some(k); }
+                if crate::ui::sbtn(ui, "Pair").clicked() { pair = Some(k); }
             });
         }
         if let Some(k) = pair { let d = m.disc.remove(k); m.pair(d); }

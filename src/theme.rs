@@ -1,9 +1,9 @@
 //! Monochrome palette. Colour is reserved for status indication only.
 use eframe::egui::{self, Color32 as C, CornerRadius, Stroke};
 
-pub const BG: C = C::from_rgb(10, 10, 10);
+pub const BG: C = C::from_rgb(8, 8, 10);
 pub const PANEL: C = C::from_rgba_premultiplied(13, 13, 13, 210);
-pub const RAD: f32 = 4.0;
+pub const RAD: f32 = 5.0;
 pub const RAISED: C = C::from_rgb(27, 27, 27);
 pub const LINE: C = C::from_rgb(44, 44, 44);
 pub const LINE2: C = C::from_rgb(78, 78, 78);
@@ -11,6 +11,13 @@ pub const TEXT: C = C::from_rgb(225, 225, 225);
 pub const DIM: C = C::from_rgb(156, 156, 156);
 pub const FAINT: C = C::from_rgb(88, 88, 88);
 pub const WHITE: C = C::from_rgb(250, 250, 250);
+
+/// Tertiary accent, used sparingly: active nav icon, tab underline, live job progress,
+/// primary plot series, sliders, the mesh gradient and the peak of the background wake.
+/// A signal cyan-blue (the Creality/Elegoo-style blue) that cannot be confused with the
+/// green / amber / red status colours.
+pub const ACCENT: C = C::from_rgb(46, 196, 255);
+pub const ACCENT_DIM: C = C::from_rgb(22, 88, 124);
 
 pub const OK: C = C::from_rgb(86, 186, 108);
 pub const WARN: C = C::from_rgb(224, 163, 48);
@@ -63,8 +70,8 @@ pub fn apply(ctx: &egui::Context) {
     v.hyperlink_color = WHITE;
     v.warn_fg_color = WARN;
     v.error_fg_color = ERR;
-    v.selection.bg_fill = C::from_rgb(70, 70, 70);
-    v.selection.stroke = Stroke::new(1.0_f32, WHITE);
+    v.selection.bg_fill = ACCENT_DIM;
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     v.slider_trailing_fill = true;
 
     let w = &mut v.widgets;
@@ -72,9 +79,9 @@ pub fn apply(ctx: &egui::Context) {
     w.noninteractive.weak_bg_fill = PANEL;
     w.noninteractive.bg_stroke = Stroke::new(1.0_f32, LINE);
     w.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    w.inactive.bg_fill = RAISED;
-    w.inactive.weak_bg_fill = RAISED;
-    w.inactive.bg_stroke = Stroke::new(1.0_f32, LINE2);
+    w.inactive.bg_fill = C::from_rgb(22, 22, 26);
+    w.inactive.weak_bg_fill = C::from_rgb(22, 22, 26);
+    w.inactive.bg_stroke = Stroke::new(1.0_f32, C::from_rgb(86, 86, 96));
     w.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
     w.hovered.bg_fill = C::from_rgb(40, 40, 40);
     w.hovered.weak_bg_fill = C::from_rgb(40, 40, 40);
@@ -93,8 +100,8 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_visuals(v);
     ctx.style_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        s.spacing.button_padding = egui::vec2(10.0, 4.0);
-        s.spacing.interact_size.y = 24.0;
+        s.spacing.button_padding = egui::vec2(16.0, 7.0);
+        s.spacing.interact_size.y = 30.0;
         s.spacing.slider_width = 160.0;
         s.spacing.scroll.bar_width = 6.0;
         s.visuals.striped = true;

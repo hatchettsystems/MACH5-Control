@@ -119,7 +119,7 @@ pub fn rules(ui: &mut Ui, m: &mut Model) {
                 ui.horizontal(|ui| {
                     ui.label(mono(format!("{}", i + 1)).color(FAINT));
                     ui.add(egui::TextEdit::singleline(a).desired_width(ui.available_width() - 40.0).font(FontId::monospace(12.5)));
-                    if ui.small_button("x").clicked() { rm = Some(i); }
+                    if crate::ui::sbtn(ui, "x").clicked() { rm = Some(i); }
                 });
             }
             if let Some(i) = rm { r.actions.remove(i); }
@@ -161,8 +161,8 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
                         ui.label(mono(format!("{} d", cl.age)));
                         ui.horizontal(|ui| {
                             if !cl.revoked {
-                                if ui.small_button("rotate").clicked() { act = Some((k, 0)); }
-                                if ui.small_button("revoke").clicked() { act = Some((k, 1)); }
+                                if crate::ui::sbtn(ui, "rotate").clicked() { act = Some((k, 0)); }
+                                if crate::ui::sbtn(ui, "revoke").clicked() { act = Some((k, 1)); }
                             } else { ui.label(dim("revoked")); }
                         });
                         ui.end_row();
@@ -396,7 +396,7 @@ pub fn spec(ui: &mut Ui, m: &mut Model) {
                 ui.end_row();
                 for (f, o, d, p) in FEATURES.iter() {
                     wrap(ui, 240.0, mono(*f)); wrap(ui, 150.0, dim(*o)); wrap(ui, 420.0, *d);
-                    if ui.small_button(p.title()).clicked() { m.goto = Some(*p); }
+                    if crate::ui::sbtn(ui, p.title()).clicked() { m.goto = Some(*p); }
                     ui.end_row();
                 }
             });

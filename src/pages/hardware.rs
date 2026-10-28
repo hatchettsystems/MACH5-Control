@@ -192,7 +192,7 @@ pub fn firmware(ui: &mut Ui, m: &mut Model) {
             for (n, mcu, h) in [("Host", "ESP32-P4", "p4-1.4.2"), ("Network Bridge", "ESP32-S3", "s3-1.4.2"), ("Motion Bridge", "STM32", "mb-1.4.2")] {
                 ui.label(n); ui.label(dim(mcu)); ui.label(mono(h)); ui.label(mono(h));
                 ui.label(mono("A / B")); status(ui, Status::Ok, "current");
-                let _ = ui.small_button("stage OTA");
+                let _ = crate::ui::sbtn(ui, "stage OTA");
                 ui.end_row();
             }
             for k in 0..m.nodes.len() {
@@ -202,7 +202,7 @@ pub fn firmware(ui: &mut Ui, m: &mut Model) {
                 ui.label(nm); ui.label(dim(mcu)); ui.label(mono(fwh).color(if cur { TEXT } else { WARN })); ui.label(mono(want));
                 ui.label(mono(format!("{} -> {}", bank, if bank == 'A' { 'B' } else { 'A' })));
                 status(ui, if cur { Status::Ok } else { Status::Warn }, if cur { "current" } else { "update available" });
-                if ui.small_button("rollback").clicked() {
+                if crate::ui::sbtn(ui, "rollback").clicked() {
                     m.nodes[k].bank = if bank == 'A' { 'B' } else { 'A' };
                     m.log(Sev::Warn, "fw", &format!("{} rolled back to previous bank ({})", nm, class));
                 }
