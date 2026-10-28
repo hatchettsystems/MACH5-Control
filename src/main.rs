@@ -106,6 +106,9 @@ impl App {
             .exact_height(40.0)
             .frame(egui::Frame::new().fill(PANEL).stroke(egui::Stroke::new(1.0_f32, LINE)).inner_margin(egui::Margin::symmetric(10, 6)))
             .show(ctx, |ui| {
+                if let Some(s) = ui::frost_shape(ctx, ui.max_rect()) {
+                    ui.painter().add(s);
+                }
                 ui.horizontal_centered(|ui| {
                     let icon = if self.nav_open { "<<" } else { "=" };
                     let tb = ui.add(egui::Button::new(RichText::new(icon).monospace().strong()).min_size(vec2(30.0, 26.0))).on_hover_text("Toggle navigation (Ctrl+B)");
@@ -145,6 +148,9 @@ impl App {
 
     fn nav(&mut self, ui: &mut egui::Ui) {
         ui::set_anchor(ui.ctx(), "nav", ui.max_rect());
+        if let Some(s) = ui::frost_shape(ui.ctx(), ui.max_rect()) {
+            ui.painter().add(s);
+        }
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             ui.label(RichText::new("MACH5").monospace().strong().size(17.0).color(WHITE));
@@ -284,8 +290,10 @@ fn paint_background(ctx: &egui::Context) {
         flies.push(Fly { start: egui::pos2(x0, y0), dir, speed: 1500.0, tau });
     }
     if flies.is_empty() {
+        ui::set_frost(ctx, None);
         return;
     }
+    let mut grid = vec![0.0_f32; (cols * rows) as usize];
 
     let frame = (t * 14.0) as i32;
     for r in 0..rows {
@@ -314,6 +322,7 @@ fn paint_background(ctx: &egui::Context) {
                 b *= 1.5;
             }
             b = (b * (0.78 + 0.22 * unit(hash(c, r, frame as u32)))).clamp(0.0, 1.0);
+            grid[(r * cols + c) as usize] = b;
             if b < 0.07 {
                 continue;
             }
@@ -324,4 +333,40 @@ fn paint_background(ctx: &egui::Context) {
             painter.text(p, egui::Align2::CENTER_CENTER, s, font.clone(), col);
         }
     }
+
+    // Coarse blurred copy of the wake for frosted-glass surfaces (3x3 cells per block, then a box blur).
+    const K: i32 = 3;
+    let (ccols, crows) = ((cols + K - 1) / K, (rows + K - 1) / K);
+    let mut coarse = vec![0.0_f32; (ccols * crows) as usize];
+    for cj in 0..crows {
+        for ci in 0..ccols {
+            let mut s = 0.0;
+            for dy in 0..K {
+                for dx in 0..K {
+                    let (c, r) = (ci * K + dx, cj * K + dy);
+                    if c < cols && r < rows {
+                        s += grid[(r * cols + c) as usize];
+                    }
+                }
+            }
+            coarse[(cj * ccols + ci) as usize] = (s / (K * K) as f32 * 2.2).min(1.0);
+        }
+    }
+    let mut blurred = coarse.clone();
+    for cj in 0..crows {
+        for ci in 0..ccols {
+            let (mut s, mut n) = (0.0, 0.0);
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (x, y) = (ci + dx, cj + dy);
+                    if x >= 0 && y >= 0 && x < ccols && y < crows {
+                        s += coarse[(y * ccols + x) as usize];
+                        n += 1.0;
+                    }
+                }
+            }
+            blurred[(cj * ccols + ci) as usize] = s / n;
+        }
+    }
+    ui::set_frost(ctx, Some(ui::FrostField { cw: cw * K as f32, ch: ch * K as f32, cols: ccols as usize, rows: crows as usize, v: blurred }));
 }

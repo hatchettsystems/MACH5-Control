@@ -2,7 +2,7 @@
 use eframe::egui::{self, Color32 as C, CornerRadius, Stroke};
 
 pub const BG: C = C::from_rgb(8, 8, 10);
-pub const PANEL: C = C::from_rgba_premultiplied(13, 13, 13, 210);
+pub const PANEL: C = C::from_rgba_premultiplied(13, 13, 13, 236);
 pub const RAD: f32 = 5.0;
 pub const RAISED: C = C::from_rgb(27, 27, 27);
 pub const LINE: C = C::from_rgb(44, 44, 44);

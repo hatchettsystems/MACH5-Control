@@ -14,6 +14,91 @@ pub fn get_anchor(ctx: &egui::Context, key: &str) -> Option<Rect> {
         .map(|(_, r)| r)
 }
 
+/// Coarse, pre-blurred brightness field of the background wake, shared with every
+/// translucent surface so it can paint a soft glow where the sharp characters are hidden.
+pub struct FrostField {
+    pub cw: f32,
+    pub ch: f32,
+    pub cols: usize,
+    pub rows: usize,
+    pub v: Vec<f32>,
+}
+
+pub fn set_frost(ctx: &egui::Context, f: Option<FrostField>) {
+    let f = f.unwrap_or(FrostField { cw: 1.0, ch: 1.0, cols: 0, rows: 0, v: Vec::new() });
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("frost"), std::sync::Arc::new(f)));
+}
+
+/// A mesh of soft vertex-coloured quads covering `rect`: frosted glass over the wake.
+pub fn frost_shape(ctx: &egui::Context, rect: Rect) -> Option<Shape> {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+    let f = ctx.data(|d| d.get_temp::<std::sync::Arc<FrostField>>(egui::Id::new("frost")))?;
+    if f.cols == 0 || rect.width() < 2.0 || rect.height() < 2.0 {
+        return None;
+    }
+    let val = |i: isize, j: isize| -> f32 {
+        let i = i.clamp(0, f.cols as isize - 1) as usize;
+        let j = j.clamp(0, f.rows as isize - 1) as usize;
+        f.v[j * f.cols + i]
+    };
+    let sample = |p: egui::Pos2| -> f32 {
+        let (gx, gy) = (p.x / f.cw - 0.5, p.y / f.ch - 0.5);
+        let (i0, j0) = (gx.floor(), gy.floor());
+        let (fx, fy) = (gx - i0, gy - j0);
+        let (i0, j0) = (i0 as isize, j0 as isize);
+        let top = val(i0, j0) * (1.0 - fx) + val(i0 + 1, j0) * fx;
+        let bot = val(i0, j0 + 1) * (1.0 - fx) + val(i0 + 1, j0 + 1) * fx;
+        top * (1.0 - fy) + bot * fy
+    };
+    let breaks = |lo: f32, hi: f32, step: f32| -> Vec<f32> {
+        let mut v = vec![lo];
+        let mut k = (lo / step - 0.5).floor() as i32;
+        loop {
+            let c = (k as f32 + 0.5) * step;
+            if c >= hi {
+                break;
+            }
+            if c > lo + 0.5 {
+                v.push(c);
+            }
+            k += 1;
+        }
+        v.push(hi);
+        v
+    };
+    let xs = breaks(rect.left(), rect.right(), f.cw);
+    let ys = breaks(rect.top(), rect.bottom(), f.ch);
+    let mut mesh = Mesh::default();
+    let mut peak = 0.0_f32;
+    for &y in &ys {
+        for &x in &xs {
+            let v = sample(egui::pos2(x, y));
+            peak = peak.max(v);
+            let a = (v * 52.0).min(58.0) as u8;
+            let k = (v * 1.3).clamp(0.0, 1.0) * 0.4;
+            let col = Color32::from_rgba_unmultiplied(
+                (255.0 + (ACCENT.r() as f32 - 255.0) * k) as u8,
+                (255.0 + (ACCENT.g() as f32 - 255.0) * k) as u8,
+                (255.0 + (ACCENT.b() as f32 - 255.0) * k) as u8,
+                a,
+            );
+            mesh.vertices.push(Vertex { pos: egui::pos2(x, y), uv: WHITE_UV, color: col });
+        }
+    }
+    if peak < 0.02 {
+        return None;
+    }
+    let w = xs.len();
+    for j in 0..ys.len() - 1 {
+        for i in 0..w - 1 {
+            let a = (j * w + i) as u32;
+            let (b, c, d) = (a + 1, a + w as u32, a + w as u32 + 1);
+            mesh.indices.extend_from_slice(&[a, b, c, b, d, c]);
+        }
+    }
+    Some(Shape::mesh(mesh))
+}
+
 pub fn mono(s: impl Into<String>) -> RichText {
     RichText::new(s.into()).monospace()
 }
@@ -32,20 +117,24 @@ pub fn title(ui: &mut Ui, t: &str, sub: &str) {
 /// Flat bordered section with a small caps header.
 pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
-    let resp = Frame::new()
-        .fill(PANEL)
-        .stroke(Stroke::new(1.0_f32, LINE))
-        .corner_radius(RAD as u8)
-        .inner_margin(Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width((w - 22.0).max(10.0));
-            if !head.is_empty() {
-                ui.label(RichText::new(head.to_uppercase()).size(11.0).color(DIM).monospace());
-                ui.add_space(4.0);
-            }
-            f(ui);
-        });
-    let r = resp.response.rect;
+    let frame = Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, LINE)).corner_radius(RAD as u8).inner_margin(Margin::same(10));
+    let mut prep = frame.begin(ui);
+    // Reserved after the frame's own fill slot, so the frosted glow sits on the glass, under the content.
+    let slot = ui.painter().add(Shape::Noop);
+    {
+        let cu = &mut prep.content_ui;
+        cu.set_width((w - 22.0).max(10.0));
+        if !head.is_empty() {
+            cu.label(RichText::new(head.to_uppercase()).size(11.0).color(DIM).monospace());
+            cu.add_space(4.0);
+        }
+        f(cu);
+    }
+    let resp = prep.end(ui);
+    let r = resp.rect;
+    if let Some(s) = frost_shape(ui.ctx(), r) {
+        ui.painter().set(slot, s);
+    }
     set_anchor(ui.ctx(), head, r);
     let focus: String = ui.ctx().data(|d| d.get_temp(egui::Id::new("tour_focus"))).unwrap_or_default();
     if !focus.is_empty() && focus == head && !ui.clip_rect().contains_rect(r) {
