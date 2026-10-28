@@ -5,6 +5,7 @@ mod data;
 mod fleetsim;
 mod pages;
 mod theme;
+mod tour;
 mod ui;
 
 use data::{Model, Page};
@@ -15,6 +16,7 @@ struct App {
     m: Model,
     page: Page,
     nav_open: bool,
+    tour: Option<tour::Tour>,
 }
 
 fn main() -> eframe::Result {
@@ -43,7 +45,12 @@ fn main() -> eframe::Result {
             m.st.tab = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0);
             m.st.farm_tab = m.st.tab;
             m.st.tab2 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-            Ok(Box::new(App { m, page, nav_open: true }))
+            let tour = if std::env::args().nth(1).as_deref() == Some("tour") {
+                Some(tour::Tour::new(std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0), page, true))
+            } else {
+                None
+            };
+            Ok(Box::new(App { m, page, nav_open: true, tour }))
         }),
     )
 }
@@ -61,6 +68,9 @@ impl eframe::App for App {
         }
 
         paint_background(ctx);
+        if ctx.input(|i| i.key_pressed(egui::Key::F1)) && self.tour.is_none() {
+            self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
+        }
         self.top_bar(ctx);
         egui::SidePanel::left("nav")
             .exact_width(228.0)
@@ -71,12 +81,17 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(18, 14)))
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt(self.page as u8).auto_shrink([false, false]).show(ui, |ui| {
                     let w = ui.available_width().min(1500.0) - 10.0;
                     ui.set_max_width(w);
                     pages::show(ui, self.page, &mut self.m);
                 });
             });
+        if let Some(mut tour) = self.tour.take() {
+            if tour.show(ctx, &mut self.m, &mut self.page, &mut self.nav_open) {
+                self.tour = Some(tour);
+            }
+        }
     }
 }
 
@@ -88,7 +103,9 @@ impl App {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     let icon = if self.nav_open { "<<" } else { "=" };
-                    if ui.add(egui::Button::new(RichText::new(icon).monospace().strong()).min_size(vec2(30.0, 26.0))).on_hover_text("Toggle navigation (Ctrl+B)").clicked() {
+                    let tb = ui.add(egui::Button::new(RichText::new(icon).monospace().strong()).min_size(vec2(30.0, 26.0))).on_hover_text("Toggle navigation (Ctrl+B)");
+                    ui::set_anchor(ctx, "navtoggle", tb.rect);
+                    if tb.clicked() {
                         self.nav_open = !self.nav_open;
                     }
                     ui.label(RichText::new("MACH5").monospace().strong().size(15.0).color(WHITE));
@@ -106,7 +123,7 @@ impl App {
                         let mut pick = None;
                         let cur = self.m.active;
                         let label = format!("{}  {}", self.m.fleet[cur].name, self.m.fleet[cur].ip);
-                        egui::ComboBox::from_id_salt("machine_switch").width(190.0).selected_text(label).show_ui(ui, |ui| {
+                        let cb = egui::ComboBox::from_id_salt("machine_switch").width(190.0).selected_text(label).show_ui(ui, |ui| {
                             for (i, f) in self.m.fleet.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     ui::dot(ui, f.state.status());
@@ -114,6 +131,7 @@ impl App {
                                 });
                             }
                         });
+                        ui::set_anchor(ctx, "switcher", cb.response.rect);
                         if let Some(i) = pick { self.m.switch_machine(i); }
                     });
                 });
@@ -121,6 +139,7 @@ impl App {
     }
 
     fn nav(&mut self, ui: &mut egui::Ui) {
+        ui::set_anchor(ui.ctx(), "nav", ui.max_rect());
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             ui.label(RichText::new("MACH5").monospace().strong().size(17.0).color(WHITE));
@@ -159,6 +178,9 @@ impl App {
                 ui.add_space(14.0);
                 if ui.button("Close nav").clicked() {
                     self.nav_open = false;
+                }
+                if ui::primary(ui, "Tutorial") {
+                    self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
                 }
                 ui.label(ui::dim("Ctrl+B"));
             });

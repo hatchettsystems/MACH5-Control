@@ -2,6 +2,18 @@
 use crate::theme::*;
 use eframe::egui::{self, vec2, Align2, Button, Color32, FontId, Frame, Margin, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui};
 
+/// On-screen rectangles of named UI regions, so the tutorial can point at them.
+pub fn set_anchor(ctx: &egui::Context, key: &str, r: Rect) {
+    let n = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("anchor", key.to_string())), (n, r)));
+}
+pub fn get_anchor(ctx: &egui::Context, key: &str) -> Option<Rect> {
+    let n = ctx.cumulative_pass_nr();
+    ctx.data(|d| d.get_temp::<(u64, Rect)>(egui::Id::new(("anchor", key.to_string()))))
+        .filter(|(f, _)| n.saturating_sub(*f) <= 3)
+        .map(|(_, r)| r)
+}
+
 pub fn mono(s: impl Into<String>) -> RichText {
     RichText::new(s.into()).monospace()
 }
@@ -20,7 +32,7 @@ pub fn title(ui: &mut Ui, t: &str, sub: &str) {
 /// Flat bordered section with a small caps header.
 pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
-    Frame::new()
+    let resp = Frame::new()
         .fill(PANEL)
         .stroke(Stroke::new(1.0_f32, LINE))
         .corner_radius(RAD as u8)
@@ -33,11 +45,17 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
             }
             f(ui);
         });
+    let r = resp.response.rect;
+    set_anchor(ui.ctx(), head, r);
+    let focus: String = ui.ctx().data(|d| d.get_temp(egui::Id::new("tour_focus"))).unwrap_or_default();
+    if !focus.is_empty() && focus == head && !ui.clip_rect().contains_rect(r) {
+        ui.scroll_to_rect(r, Some(egui::Align::Center));
+    }
     ui.add_space(8.0);
 }
 
 pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
-    ui.horizontal(|ui| {
+    let r = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for (i, n) in names.iter().enumerate() {
             let sel = *cur == i;
@@ -49,6 +67,7 @@ pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
             }
         }
     });
+    set_anchor(ui.ctx(), "tabs", r.response.rect);
     ui.add_space(8.0);
 }
 
@@ -59,7 +78,9 @@ pub fn button(ui: &mut Ui, t: &str) -> bool {
     ui.button(t).clicked()
 }
 pub fn danger(ui: &mut Ui, t: &str) -> bool {
-    ui.add(Button::new(RichText::new(t).color(Color32::WHITE).strong()).fill(Color32::from_rgb(150, 30, 30)).stroke(Stroke::new(1.0_f32, ERR))).clicked()
+    let r = ui.add(Button::new(RichText::new(t).color(Color32::WHITE).strong()).fill(Color32::from_rgb(150, 30, 30)).stroke(Stroke::new(1.0_f32, ERR)));
+    set_anchor(ui.ctx(), "estop", r.rect);
+    r.clicked()
 }
 
 pub fn dot(ui: &mut Ui, s: Status) {

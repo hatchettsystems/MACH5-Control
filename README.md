@@ -35,3 +35,10 @@ in the top bar and every other page (dashboard, thermal, print, ...) shows that 
 Fleet tabs: Overview (bulk pause/resume/cancel/cool/send job/set group), Queue (auto-dispatch to idle
 machines), Cameras (live wall), Alerts (failure detection, auto-pause), Spools (shared stock),
 Analytics (utilisation, throughput) and Roll-out & discovery (staged firmware with health gates, pairing).
+
+## Tutorial
+
+Click **Tutorial** at the bottom of the sidebar (or press F1) for a 40-step guided tour. It navigates the
+app, spotlights the real on-screen element for each step with an animated pointer, and runs short live
+demos (machine switch, object exclusion, firmware flash, failure alert, roll-out, simulation).
+Arrow keys move between steps, Esc exits. `cargo run -- tour 12` starts at step 12.
