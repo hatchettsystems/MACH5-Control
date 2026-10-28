@@ -91,20 +91,21 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
                 big(ui, "Est. cost", format!("${:.2}", grams * 0.026));
             });
             ui.add_space(6.0);
-            state_actions(ui, m);
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(dim("Speed"));
-                ui.add(egui::Slider::new(&mut m.job.speed, 20.0..=300.0).suffix(" %"));
-                ui.label(dim("Flow"));
-                ui.add(egui::Slider::new(&mut m.job.flow, 80.0..=120.0).suffix(" %"));
-            });
             ui.horizontal(|ui| {
-                ui.label(dim("Z offset (live)"));
-                for (lbl, d) in [("-0.05", -0.05), ("-0.01", -0.01), ("+0.01", 0.01), ("+0.05", 0.05)] {
-                    if button(ui, lbl) { m.z_offset += d; }
-                }
-                ui.label(mono(format!("{:+.3} mm", m.z_offset)).color(WHITE));
+                ui.vertical(|ui| {
+                    state_actions(ui, m);
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(dim("Z offset (live)"));
+                        for (lbl, d) in [("-0.05", -0.05), ("-0.01", -0.01), ("+0.01", 0.01), ("+0.05", 0.05)] {
+                            if button(ui, lbl) { m.z_offset += d; }
+                        }
+                        ui.label(mono(format!("{:+.3} mm", m.z_offset)).color(WHITE));
+                    });
+                });
+                ui.add_space(14.0);
+                knob(ui, &mut m.job.speed, (20.0, 300.0), "Speed", "%", 0);
+                knob(ui, &mut m.job.flow, (80.0, 120.0), "Flow", "%", 0);
             });
         });
     }, |ui, m| {
@@ -180,16 +181,18 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
     fixed(ui, w0, |ui| {
     ui.columns(3, |c| {
         panel(&mut c[0], "Filament", |ui| {
-            let sp = &m.spools[0];
-            ui.horizontal(|ui| { status(ui, Status::Ok, "Filament present"); ui.label(dim("T0 selected")); });
+            let act = m.active;
+            let sp = m.loaded(act).first().map(|&i| m.fspools[i].clone());
+            ui.horizontal(|ui| { status(ui, if sp.is_some() { Status::Ok } else { Status::Warn }, if sp.is_some() { "Filament present" } else { "No spool loaded" }); ui.label(dim("T0 selected")); });
+            let sp = match sp { Some(s) => s, None => { ui.label(dim("Assign a spool from Fleet or Spool Inventory.")); if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); } return; } };
             kv(ui, "dash_fil", &[
-                ("Spool", format!("#{} {} {}", sp.id, sp.brand, sp.color)),
-                ("Material", format!("{} ({})", sp.mat, m.profiles[sp.profile].name)),
-                ("Remaining", format!("{:.0} g of {:.0} g", sp.left, sp.total)),
-                ("Nozzle", "0.4 mm, hardened".into()),
-                ("Runouts", "0 this job".into()),
+                ("Spool", format!("{}  {} {}", crate::spools::code(sp.id), sp.brand, sp.color)),
+                ("Material", format!("{} ({})", sp.mat, m.profiles[crate::spools::profile_for(&sp.mat)].name)),
+                ("Remaining", format!("{:.0} g of {:.0} g  (~{:.0} m)", sp.left, sp.net, crate::spools::length_m(&sp.mat, sp.dia, sp.left))),
+                ("Nozzle", format!("{:.1} mm, hardened", m.fleet[act].nozzle)),
+                ("Spool loaded", format!("{} slot(s) in use", m.loaded(act).len())),
             ]);
-            bar_full(ui, sp.left / sp.total, None);
+            bar_full(ui, sp.left / sp.net.max(1.0), None);
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.add(DragValue::new(&mut m.st.extr_len).range(1.0..=200.0).suffix(" mm"));
@@ -203,18 +206,24 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
             });
         });
         panel(&mut c[1], "Fans and outputs", |ui| {
-            ui.spacing_mut().slider_width = 80.0;
-            egui::Grid::new("dash_fans").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
                 for f in m.fans.iter_mut() {
-                    ui.label(dim(f.name));
-                    ui.add(egui::Slider::new(&mut f.pct, 0.0..=100.0).suffix(" %"));
-                    ui.end_row();
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        knob(ui, &mut f.pct, (0.0, 100.0), f.name.split(' ').next().unwrap_or(f.name), "%", 0);
+                        ui.label(mono(format!("{:.0} rpm", f.rpm_max * f.pct / 100.0)).size(10.0).color(if f.pct > 0.5 { DIM } else { FAINT }));
+                        ui.label(dim(f.node).size(9.5));
+                    });
                 }
-                ui.label(dim("Chamber LED"));
-                ui.add(egui::Slider::new(&mut m.st.led, 0.0..=100.0).suffix(" %"));
-                ui.end_row();
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    knob(ui, &mut m.st.led, (0.0, 100.0), "LED", "%", 0);
+                    ui.label(mono(if m.st.led > 0.5 { "on" } else { "off" }).size(10.0).color(DIM));
+                    ui.label(dim("Chamber IO").size(9.5));
+                });
             });
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 status(ui, if m.nodes.iter().any(|n| n.class == "CHAMBER_IO" && n.status != Status::Ok) { Status::Warn } else { Status::Ok }, "Door");
                 ui.add_space(10.0);

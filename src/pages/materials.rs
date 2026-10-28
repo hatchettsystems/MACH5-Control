@@ -6,8 +6,8 @@ use eframe::egui::{self, vec2, Align2, Color32, DragValue, FontId, Sense, Stroke
 const MMU_STATES: [&str; 6] = ["IDLE", "SELECT", "FEED", "LOADED", "RETRACT", "FAULT"];
 
 pub fn filament(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Filament", "MMU node state machine, spool inventory and filament profiles");
-    tabs(ui, &mut m.st.tab, &["MMU", "Spool inventory", "Profiles"]);
+    title(ui, "Filament", "MMU node state machine, loaded spools and filament profiles. The spool database itself lives in Spool Inventory");
+    tabs(ui, &mut m.st.tab, &["MMU", "Profiles"]);
     match m.st.tab {
         0 => {
             panel(ui, "MMU node (CAN FD B, 0x33)", |ui| {
@@ -15,10 +15,10 @@ pub fn filament(ui: &mut Ui, m: &mut Model) {
                     ui.label(dim("State"));
                     for (k, s) in MMU_STATES.iter().enumerate() {
                         let active = m.mmu_state == k;
-                        let (r, _) = ui.allocate_exact_size(vec2(82.0, 24.0), Sense::hover());
+                        let (r, _) = ui.allocate_exact_size(vec2(82.0, 26.0), Sense::hover());
                         let fill = if active { WHITE } else { Color32::TRANSPARENT };
-                        ui.painter().rect_filled(r, crate::theme::RAD, fill);
-                        ui.painter().rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, if active { WHITE } else { LINE2 }), StrokeKind::Inside);
+                        ui.painter().rect_filled(r, RAD, fill);
+                        ui.painter().rect_stroke(r, RAD, Stroke::new(1.0_f32, if active { WHITE } else { LINE2 }), StrokeKind::Inside);
                         ui.painter().text(r.center(), Align2::CENTER_CENTER, *s, FontId::monospace(11.0), if active { BG } else { DIM });
                     }
                 });
@@ -36,19 +36,21 @@ pub fn filament(ui: &mut Ui, m: &mut Model) {
                     if button(ui, "Clear fault") { m.mmu_state = 0; }
                 });
             });
-            panel(ui, "Slots", |ui| {
+            let act = m.active;
+            panel(ui, &format!("Slots - {}", m.fleet[act].name), |ui| {
                 egui::Grid::new("slots").num_columns(6).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
                     for h in ["Slot", "Select", "Sensor", "Spool", "Material", "Remaining"] { th(ui, h); }
                     ui.end_row();
-                    for (k, s) in m.slots.iter().enumerate() {
+                    for k in 0..m.fleet[act].slots {
+                        let sp = m.spool_on(act, k).map(|i| m.fspools[i].clone());
                         ui.label(mono(format!("T{}", k)));
-                        if ui.selectable_label(m.st.step == k, if m.st.step == k { "selected" } else { "select" }).clicked() { m.st.step = k; }
-                        status(ui, if s.sensor { Status::Ok } else { Status::Off }, if s.sensor { "filament" } else { "empty" });
-                        match m.spools.iter().find(|sp| Some(sp.id) == s.spool) {
-                            Some(sp) => {
-                                ui.label(format!("#{} {} {}", sp.id, sp.brand, sp.color));
-                                ui.label(sp.mat);
-                                ui.horizontal(|ui| { bar(ui, sp.left / sp.total, 70.0, if sp.left < 100.0 { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", sp.left))); });
+                        if ui.selectable_label(m.st.step == k as usize, if m.st.step == k as usize { "selected" } else { "select" }).clicked() { m.st.step = k as usize; }
+                        status(ui, if sp.is_some() { Status::Ok } else { Status::Off }, if sp.is_some() { "filament" } else { "empty" });
+                        match sp {
+                            Some(s) => {
+                                ui.label(format!("{}  {} {}", crate::spools::code(s.id), s.brand, s.color));
+                                ui.label(s.mat.clone());
+                                ui.horizontal(|ui| { bar(ui, s.left / s.net.max(1.0), 70.0, if s.left < m.low_thr { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left))); });
                             }
                             None => { ui.label(dim("-")); ui.label(dim("-")); ui.label(dim("-")); }
                         }
@@ -56,49 +58,10 @@ pub fn filament(ui: &mut Ui, m: &mut Model) {
                     }
                 });
                 if !m.mmu_verbs.is_empty() { ui.add_space(4.0); ui.label(dim(format!("last: {}", m.mmu_verbs.last().unwrap()))); }
-            });
-        }
-        1 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Spool database (lives in the machine, syncs to the app)", |ui| {
-                    egui::Grid::new("spools").num_columns(6).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
-                        for h in ["ID", "Brand", "Material", "Colour", "Remaining", "Slot"] { th(ui, h); }
-                        ui.end_row();
-                        for (k, s) in m.spools.iter().enumerate() {
-                            if ui.selectable_label(m.st.sel_spool == k, format!("#{}", s.id)).clicked() { m.st.sel_spool = k; }
-                            ui.label(s.brand);
-                            ui.label(s.mat);
-                            ui.label(s.color);
-                            ui.horizontal(|ui| { bar(ui, s.left / s.total, 60.0, if s.left < 100.0 { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left))); });
-                            ui.label(mono(s.slot.map(|x| format!("T{}", x)).unwrap_or("-".into())));
-                            ui.end_row();
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if button(ui, "Add spool") {
-                            let id = m.spools.len() as u32 + 1;
-                            m.spools.push(Spool { id, brand: "New", mat: "PLA", color: "Unset", left: 1000.0, total: 1000.0, slot: None, profile: 0 });
-                        }
-                        button(ui, "Scan tag");
-                    });
-                });
-                panel(&mut c[1], "Selected spool", |ui| {
-                    let k = m.st.sel_spool.min(m.spools.len() - 1);
-                    let pnames: Vec<&str> = m.profiles.iter().map(|p| p.name).collect();
-                    let s = &mut m.spools[k];
-                    egui::Grid::new("spool_edit").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
-                        ui.label(dim("ID")); ui.label(mono(format!("#{}", s.id))); ui.end_row();
-                        ui.label(dim("Remaining")); ui.add(DragValue::new(&mut s.left).range(0.0..=s.total).suffix(" g")); ui.end_row();
-                        ui.label(dim("Total")); ui.add(DragValue::new(&mut s.total).range(1.0..=10000.0).suffix(" g")); ui.end_row();
-                        ui.label(dim("Profile"));
-                        egui::ComboBox::from_id_salt("sp_prof").selected_text(pnames[s.profile]).show_ui(ui, |ui| {
-                            for (i, n) in pnames.iter().enumerate() { ui.selectable_value(&mut s.profile, i, *n); }
-                        });
-                        ui.end_row();
-                    });
-                    ui.add_space(4.0);
-                    ui.label(dim("Usage is subtracted from the extrusion count on job end."));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+                    ui.label(dim("Assign and unload spools per machine from Fleet or the inventory."));
                 });
             });
         }
@@ -168,7 +131,7 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
                     ui.checkbox(&mut m.det_on, "Spaghetti / failure detection");
                     egui::Grid::new("det").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
                         ui.label(dim("Sensitivity"));
-                        ui.add(egui::Slider::new(&mut m.det_sens, 0.1..=1.0));
+                        knob(ui, &mut m.det_sens, (0.1, 1.0), "", "", 2);
                         ui.end_row();
                         ui.label(dim("On detection"));
                         egui::ComboBox::from_id_salt("det_act").selected_text(["Pause via API", "Notify only", "Cancel"][m.det_action]).show_ui(ui, |ui| {

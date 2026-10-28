@@ -10,7 +10,7 @@ pub const HIST: usize = 240;
 pub enum Page {
     Dashboard, Control, Print, Thermal,
     Motion, Calibration, Probe, Drives,
-    Materials, Camera,
+    Materials, Spools, Camera,
     CanBus, Nodes, Firmware,
     Builder, Config, Rules, Api, Fleet, Simulator, Spec, Logs,
 }
@@ -19,7 +19,7 @@ impl Page {
     pub const GROUPS: &'static [(&'static str, &'static [Page])] = &[
         ("Machine", &[Page::Dashboard, Page::Control, Page::Print, Page::Thermal]),
         ("Tuning", &[Page::Motion, Page::Calibration, Page::Probe, Page::Drives]),
-        ("Materials", &[Page::Materials, Page::Camera]),
+        ("Materials", &[Page::Materials, Page::Spools, Page::Camera]),
         ("Hardware", &[Page::CanBus, Page::Nodes, Page::Firmware]),
         ("System", &[Page::Fleet, Page::Builder, Page::Config, Page::Rules, Page::Api, Page::Simulator, Page::Logs, Page::Spec]),
     ];
@@ -27,7 +27,7 @@ impl Page {
         match self {
             Page::Dashboard => "Dashboard", Page::Control => "Control", Page::Print => "Print",
             Page::Thermal => "Thermal", Page::Motion => "Motion", Page::Calibration => "Calibration",
-            Page::Probe => "Eddy Probe", Page::Drives => "Drives", Page::Materials => "Filament",
+            Page::Probe => "Eddy Probe", Page::Drives => "Drives", Page::Materials => "Filament", Page::Spools => "Spool Inventory",
             Page::Camera => "Camera", Page::CanBus => "CAN FD Bus", Page::Nodes => "Nodes",
             Page::Firmware => "Firmware", Page::Builder => "Config Builder", Page::Config => "Config", Page::Rules => "Rules",
             Page::Api => "API & Security", Page::Fleet => "Fleet", Page::Simulator => "Simulator",
@@ -40,7 +40,7 @@ impl Page {
             Page::Motion => "05", Page::Calibration => "06", Page::Probe => "07", Page::Drives => "08",
             Page::Materials => "09", Page::Camera => "10", Page::CanBus => "11", Page::Nodes => "12",
             Page::Firmware => "13", Page::Fleet => "14", Page::Config => "15", Page::Rules => "16", Page::Api => "17",
-            Page::Simulator => "18", Page::Logs => "19", Page::Spec => "20", Page::Builder => "21",
+            Page::Simulator => "18", Page::Logs => "19", Page::Spec => "20", Page::Builder => "21", Page::Spools => "22",
         }
     }
 }
@@ -122,9 +122,7 @@ pub struct Drive {
 
 pub struct FileEntry { pub name: &'static str, pub size_mb: f32, pub mins: u32, pub grams: f32, pub objects: u32, pub mat: &'static str, pub slicer: &'static str }
 
-pub struct Spool { pub id: u32, pub brand: &'static str, pub mat: &'static str, pub color: &'static str, pub left: f32, pub total: f32, pub slot: Option<usize>, pub profile: usize }
 pub struct Profile { pub name: &'static str, pub nozzle: f32, pub bed: f32, pub chamber: f32, pub pa: f32, pub flow: f32, pub fan: f32 }
-pub struct Slot { pub spool: Option<u32>, pub sensor: bool }
 
 #[derive(Clone)]
 pub struct FleetMachine {
@@ -135,10 +133,44 @@ pub struct FleetMachine {
     pub fw: String, pub nodes: (u8, u8), pub sel: bool, pub health: Status,
     pub fp: String, pub key_age: u32, pub wave: u8,
     pub jobs_done: u32, pub hours: f32, pub grams: f32, pub fails: u32, pub util: [f32; 7],
+    pub nozzle: f32, pub slots: u8, pub notes: String,
 }
 pub struct QJob { pub id: u32, pub file: &'static str, pub material: &'static str, pub mins: u32, pub left: u32, pub prio: usize, pub target: Option<usize>, pub running: Option<usize> }
 pub struct FAlert { pub ts: String, pub machine: usize, pub sev: Sev, pub msg: String, pub ack: bool }
-pub struct FSpool { pub id: u32, pub brand: &'static str, pub mat: &'static str, pub color: &'static str, pub left: f32, pub total: f32, pub machine: Option<usize> }
+#[derive(Clone, PartialEq)]
+pub enum Loc { Shelf, Dryer, Machine(usize), Archived }
+
+#[derive(Clone)]
+pub struct FSpool {
+    pub id: u32, pub brand: String, pub mat: String, pub color: String, pub dia: f32,
+    pub net: f32, pub tare: f32, pub left: f32, pub cost: f32,
+    pub supplier: String, pub lot: String, pub bought: String, pub dried: String,
+    pub shelf: String, pub loc: Loc, pub slot: u8, pub notes: String,
+    pub printed: bool, pub used: f32, pub history: Vec<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Conn { Network, Usb, Bluetooth }
+#[derive(Clone, Copy, PartialEq)]
+pub enum Lang { Zpl, Tspl, EscPos, Cpcl }
+pub struct Printer { pub name: String, pub conn: Conn, pub lang: Lang, pub addr: String, pub demo: bool }
+pub struct LabelJob { pub ts: String, pub codes: Vec<u32>, pub copies: u32, pub printer: String, pub status: String }
+
+pub struct LabelCfg {
+    pub printer: usize, pub size: usize, pub layout: usize, pub copies: u32,
+    pub show_brand: bool, pub show_dia: bool, pub show_lot: bool, pub show_weight: bool,
+    pub sel: Vec<u32>, pub msg: String,
+    pub np_name: String, pub np_addr: String, pub np_conn: usize, pub np_lang: usize,
+}
+
+#[derive(Clone)]
+pub struct SpoolEntry {
+    pub step: usize, pub source: usize, pub gtin: String,
+    pub brand: String, pub mat: usize, pub color: String, pub dia: usize,
+    pub net: f32, pub tare: f32, pub cost: f32, pub supplier: String, pub lot: String,
+    pub bought: String, pub shelf: String, pub qty: u32, pub notes: String,
+    pub print_after: bool, pub created: Vec<u32>,
+}
 pub struct Disc { pub name: String, pub ip: String }
 pub struct Rollout { pub wave: usize, pub prog: f32, pub running: bool, pub halted: Option<String>, pub done: bool }
 pub struct Client { pub name: &'static str, pub kind: &'static str, pub fp: &'static str, pub scope: &'static str, pub seen: &'static str, pub revoked: bool, pub age: u32 }
@@ -169,7 +201,6 @@ pub struct St {
     pub sel_node: usize,
     pub sel_rule: usize,
     pub sel_sec: usize,
-    pub sel_spool: usize,
     pub tab: usize,
     pub tab2: usize,
     pub log_filter: usize,
@@ -186,6 +217,20 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub sp_q: String,
+    pub sp_mat: usize,
+    pub sp_loc: usize,
+    pub sp_low: bool,
+    pub sel_spool_id: u32,
+    pub scan_text: String,
+    pub scan_msg: String,
+    pub weigh_gross: f32,
+    pub add_open: bool,
+    pub add_name: String,
+    pub add_ip: String,
+    pub add_model: usize,
+    pub add_group: usize,
+    pub confirm_rm: Option<usize>,
     pub led: f32,
     pub farm_tab: usize,
     pub q_file: usize,
@@ -214,9 +259,7 @@ pub struct Model {
     pub drives: Vec<Drive>,
     pub nodes: Vec<Node>,
     pub files: Vec<FileEntry>,
-    pub spools: Vec<Spool>,
     pub profiles: Vec<Profile>,
-    pub slots: Vec<Slot>,
     pub fleet: Vec<FleetMachine>,
     pub clients: Vec<Client>,
     pub rules: Vec<Rule>,
@@ -253,6 +296,13 @@ pub struct Model {
     pub auto_pause: bool,
     pub alerts: Vec<FAlert>,
     pub fspools: Vec<FSpool>,
+    pub next_spool: u32,
+    pub printers: Vec<Printer>,
+    pub label_jobs: Vec<LabelJob>,
+    pub label: LabelCfg,
+    pub entry: SpoolEntry,
+    pub print_tx: std::sync::mpsc::Sender<String>,
+    pub print_rx: std::sync::mpsc::Receiver<String>,
     pub disc: Vec<Disc>,
     pub h_farm_n: VecDeque<f32>,
     pub h_farm_g: VecDeque<f32>,
@@ -349,6 +399,7 @@ impl Model {
             sy.push_back(18.0 + (x * 1.3).sin() * 6.0);
         }
 
+        let (tx, rx) = std::sync::mpsc::channel();
         let mut m = Model {
             t: 0.0, acc: 0.0, rng: 0x2545_F491_4F6C_DD1D, goto: None,
             name: "Tomahawk-01".into(),
@@ -385,15 +436,6 @@ impl Model {
                 FileEntry { name: "pa_calib_tower.gcode", size_mb: 0.4, mins: 18, grams: 6.0, objects: 1, mat: "PETG", slicer: "MACH5 app" },
                 FileEntry { name: "mmu_test_4color.gcode", size_mb: 18.0, mins: 144, grams: 71.0, objects: 4, mat: "PLA x4", slicer: "OrcaSlicer 2.3" },
             ],
-            spools: vec![
-                Spool { id: 1, brand: "Polymaker", mat: "PA6-CF", color: "Black", left: 612.0, total: 750.0, slot: Some(0), profile: 3 },
-                Spool { id: 2, brand: "Prusament", mat: "PETG", color: "Galaxy Black", left: 940.0, total: 1000.0, slot: Some(1), profile: 1 },
-                Spool { id: 3, brand: "Elegoo", mat: "PLA", color: "White", left: 288.0, total: 1000.0, slot: Some(2), profile: 0 },
-                Spool { id: 4, brand: "Polymaker", mat: "ASA", color: "Grey", left: 702.0, total: 1000.0, slot: Some(3), profile: 2 },
-                Spool { id: 5, brand: "Fiberon", mat: "PA12-CF", color: "Black", left: 1000.0, total: 1000.0, slot: None, profile: 3 },
-                Spool { id: 6, brand: "Sunlu", mat: "PLA", color: "Red", left: 47.0, total: 1000.0, slot: None, profile: 0 },
-                Spool { id: 7, brand: "eSun", mat: "TPU 95A", color: "Natural", left: 410.0, total: 500.0, slot: None, profile: 4 },
-            ],
             profiles: vec![
                 Profile { name: "PLA", nozzle: 215.0, bed: 60.0, chamber: 0.0, pa: 0.036, flow: 0.98, fan: 100.0 },
                 Profile { name: "PETG", nozzle: 240.0, bed: 80.0, chamber: 0.0, pa: 0.052, flow: 0.96, fan: 50.0 },
@@ -401,7 +443,6 @@ impl Model {
                 Profile { name: "PA-CF", nozzle: 275.0, bed: 90.0, chamber: 60.0, pa: 0.031, flow: 0.95, fan: 30.0 },
                 Profile { name: "TPU", nozzle: 230.0, bed: 50.0, chamber: 0.0, pa: 0.120, flow: 1.00, fan: 40.0 },
             ],
-            slots: (0..8).map(|k| Slot { spool: if k < 4 { Some(k as u32 + 1) } else { None }, sensor: k < 4 }).collect(),
             fleet: crate::fleetsim::make_fleet(),
             clients: vec![
                 Client { name: "Desktop - JH-WORKSTATION", kind: "Management Interface", fp: "SHA256:7Qk2...c9Ad", scope: "admin", seen: "now", revoked: false, age: 41 },
@@ -438,7 +479,10 @@ impl Model {
             bld: crate::builder::Builder::new(),
             rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
             active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: false, auto_pause: true,
-            alerts: Vec::new(), fspools: Vec::new(),
+            alerts: Vec::new(), fspools: Vec::new(), next_spool: 1,
+            printers: crate::spools::default_printers(), label_jobs: Vec::new(),
+            label: crate::spools::default_label(), entry: crate::spools::default_entry(),
+            print_tx: tx, print_rx: rx,
             disc: vec![Disc { name: "Tomahawk-15".into(), ip: "10.0.4.35".into() }, Disc { name: "Bench-C".into(), ip: "10.0.9.4".into() }],
             h_farm_n: std::iter::repeat(10.0).take(HIST).collect(), h_farm_g: (0..HIST).map(|k| 1750.0 + (k as f32 * 0.7).sin() * 120.0).collect(),
             low_thr: 150.0, farm_t: 0.0, next_event: 8.0, done_log: Vec::new(), scan_n: 0,

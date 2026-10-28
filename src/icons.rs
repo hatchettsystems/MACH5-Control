@@ -60,6 +60,14 @@ pub fn draw(p: &Painter, page: Page, c: Pos2, col: Color32) {
             p.circle_stroke(c, 2.2, s);
             ln(o(-7.0, 0.0), o(-2.2, 0.0));
         }
+        Page::Spools => {
+            for (dx, dy) in [(-4.5, -4.5), (4.5, -4.5), (-4.5, 4.5)] {
+                sq(o(dx, dy), 2.4);
+            }
+            for (dx, dy) in [(2.5, 2.5), (6.0, 2.5), (2.5, 6.0), (6.0, 6.0), (4.2, 4.2)] {
+                p.circle_filled(o(dx, dy), 0.9, col);
+            }
+        }
         Page::Camera => {
             p.rect_stroke(Rect::from_center_size(c, vec2(15.0, 10.5)), 2.0, s, StrokeKind::Middle);
             p.circle_stroke(c, 3.0, s);

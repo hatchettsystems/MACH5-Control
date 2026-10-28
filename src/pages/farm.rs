@@ -26,14 +26,13 @@ fn in_group(m: &Model, i: usize) -> bool {
 pub fn fleet(ui: &mut Ui, m: &mut Model) {
     title(ui, "Fleet", "Farm of machines: all running at once, live. Pick any machine in the top bar to drive it in the other pages");
     summary(ui, m);
-    tabs(ui, &mut m.st.farm_tab, &["Overview", "Queue", "Cameras", "Alerts", "Spools", "Analytics", "Roll-out & discovery"]);
+    tabs(ui, &mut m.st.farm_tab, &["Overview", "Queue", "Cameras", "Alerts", "Analytics", "Roll-out & discovery"]);
     match m.st.farm_tab {
         0 => overview(ui, m),
         1 => queue(ui, m),
         2 => cameras(ui, m),
         3 => alerts(ui, m),
-        4 => spools(ui, m),
-        5 => analytics(ui, m),
+        4 => analytics(ui, m),
         _ => rollout(ui, m),
     }
 }
@@ -63,6 +62,11 @@ fn summary(ui: &mut Ui, m: &mut Model) {
 fn overview(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Bulk actions", |ui| {
         ui.horizontal_wrapped(|ui| {
+            if primary(ui, "+ Add machine") {
+                m.st.add_open = true;
+                m.st.add_name = format!("Tomahawk-{:02}", m.fleet.len() + 1);
+                m.st.add_ip = format!("10.0.4.{}", 40 + m.fleet.len());
+            }
             ui.label(dim("Group"));
             egui::ComboBox::from_id_salt("grp_filter").width(110.0).selected_text(if m.st.grp_filter == 0 { "All" } else { GROUPS[m.st.grp_filter - 1] }).show_ui(ui, |ui| {
                 ui.selectable_value(&mut m.st.grp_filter, 0, "All");
@@ -148,30 +152,102 @@ fn overview(ui: &mut Ui, m: &mut Model) {
     });
 
     let k = m.st.sel_fleet.min(m.fleet.len() - 1);
-    ui.columns(2, |c| {
-        panel(&mut c[0], &format!("{} - identity and keys", m.fleet[k].name), |ui| {
-            let f = &m.fleet[k];
-            kv(ui, "fm_id", &[
-                ("Address", f.ip.clone()),
-                ("Model", f.model.to_string()),
-                ("Firmware", f.fw.clone()),
-                ("Client key", format!("{}  ({} d old)", f.fp, f.key_age)),
-            ]);
-            ui.horizontal(|ui| {
+    let mut acts: Vec<(u8, u8, u32)> = Vec::new(); // (kind, slot, spool)
+    ui.columns(3, |c| {
+        panel(&mut c[0], &format!("{} - settings", m.fleet[k].name), |ui| {
+            let (old_slots, old_name) = (m.fleet[k].slots, m.fleet[k].name.clone());
+            egui::Grid::new("fm_edit").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
+                ui.label(dim("Name"));
+                ui.add(egui::TextEdit::singleline(&mut m.fleet[k].name).desired_width(150.0));
+                ui.end_row();
+                ui.label(dim("Address"));
+                ui.add(egui::TextEdit::singleline(&mut m.fleet[k].ip).desired_width(150.0));
+                ui.end_row();
+                ui.label(dim("Model"));
+                egui::ComboBox::from_id_salt("fm_model").width(150.0).selected_text(m.fleet[k].model).show_ui(ui, |ui| {
+                    for n in ["Tomahawk", "Dev bench", "Other"] {
+                        if ui.selectable_label(m.fleet[k].model == n, n).clicked() { m.fleet[k].model = n; }
+                    }
+                });
+                ui.end_row();
                 ui.label(dim("Group"));
-                egui::ComboBox::from_id_salt("fm_group").width(100.0).selected_text(GROUPS[m.fleet[k].group]).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("fm_group").width(150.0).selected_text(GROUPS[m.fleet[k].group]).show_ui(ui, |ui| {
                     for (g, n) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.fleet[k].group, g, *n); }
                 });
+                ui.end_row();
+                ui.label(dim("Nozzle"));
+                ui.add(DragValue::new(&mut m.fleet[k].nozzle).range(0.2..=1.2).speed(0.05).suffix(" mm"));
+                ui.end_row();
+                ui.label(dim("Filament slots"));
+                let mut sl = m.fleet[k].slots as i32;
+                ui.add(DragValue::new(&mut sl).range(1..=16));
+                m.fleet[k].slots = sl as u8;
+                ui.end_row();
+                ui.label(dim("Notes"));
+                ui.add(egui::TextEdit::singleline(&mut m.fleet[k].notes).desired_width(150.0).hint_text("rack, owner, ..."));
+                ui.end_row();
             });
-            ui.horizontal(|ui| {
+            if m.fleet[k].name != old_name && k == m.active { m.name = m.fleet[k].name.clone(); }
+            if m.fleet[k].slots < old_slots {
+                let ns = m.fleet[k].slots;
+                let ids: Vec<u32> = m.fspools.iter().filter(|s| s.loc == Loc::Machine(k) && s.slot >= ns).map(|s| s.id).collect();
+                for id in ids { m.unload_spool(id); }
+            }
+            ui.add_space(4.0);
+            kv(ui, "fm_id", &[("Firmware", m.fleet[k].fw.clone()), ("Client key", format!("{} ({} d)", m.fleet[k].fp, m.fleet[k].key_age))]);
+            ui.horizontal_wrapped(|ui| {
                 if button(ui, "Rotate key") { m.fleet[k].key_age = 0; let n = m.fleet[k].name.clone(); m.log(Sev::Info, "farm", &format!("Key rotated for {}", n)); }
                 if button(ui, "Open dashboard") { m.switch_machine(k); m.goto = Some(Page::Dashboard); }
-                ui.add_enabled_ui(k != m.active && m.fleet[k].state != MState::Printing, |ui| {
-                    if button(ui, "Unpair") { m.unpair(k); }
-                });
             });
+            ui.add_space(4.0);
+            let can_rm = k != m.active && m.fleet[k].state != MState::Printing;
+            if m.st.confirm_rm == Some(k) {
+                ui.label(RichText::new("Remove this machine? Loaded spools return to the shelf.").color(WARN));
+                ui.horizontal(|ui| {
+                    if danger(ui, "Confirm remove") { acts.push((9, 0, 0)); }
+                    if button(ui, "Cancel") { m.st.confirm_rm = None; }
+                });
+            } else {
+                ui.add_enabled_ui(can_rm, |ui| {
+                    if button(ui, "Remove machine...") { m.st.confirm_rm = Some(k); }
+                });
+                if !can_rm { ui.label(dim("Select another machine and stop its print to remove it.")); }
+            }
         });
-        panel(&mut c[1], &format!("{} - history", m.fleet[k].name), |ui| {
+        panel(&mut c[1], &format!("{} - loaded spools", m.fleet[k].name), |ui| {
+            egui::Grid::new("fm_spools").num_columns(3).spacing([12.0, 7.0]).show(ui, |ui| {
+                for slot in 0..m.fleet[k].slots {
+                    ui.label(mono(format!("T{}", slot)).color(DIM));
+                    match m.spool_on(k, slot) {
+                        Some(si) => {
+                            let s = &m.fspools[si];
+                            ui.vertical(|ui| {
+                                ui.add(egui::Label::new(RichText::new(format!("{}  {} {}", crate::spools::code(s.id), s.mat, s.color)).size(12.5)).extend());
+                                ui.horizontal(|ui| { bar(ui, s.left / s.net.max(1.0), 70.0, if s.left < m.low_thr { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left)).size(11.5)); });
+                            });
+                            if sbtn(ui, "unload").clicked() { acts.push((1, slot, s.id)); }
+                        }
+                        None => {
+                            ui.label(dim("empty"));
+                            ui.menu_button("assign spool", |ui| {
+                                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                    for s in m.fspools.iter().filter(|s| matches!(s.loc, Loc::Shelf | Loc::Dryer) && s.left > 5.0) {
+                                        if ui.button(format!("{}  {} {} {}  {:.0} g", crate::spools::code(s.id), s.brand, s.mat, s.color, s.left)).clicked() {
+                                            acts.push((2, slot, s.id));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+            ui.add_space(4.0);
+            if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+        });
+        panel(&mut c[2], &format!("{} - history", m.fleet[k].name), |ui| {
             let f = &m.fleet[k];
             kv(ui, "fm_hist", &[
                 ("Jobs completed", f.jobs_done.to_string()),
@@ -182,10 +258,72 @@ fn overview(ui: &mut Ui, m: &mut Model) {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(dim("7 days"));
-                for u in f.util.iter() { bar(ui, *u, 36.0, None); }
+                for u in f.util.iter() { bar(ui, *u, 22.0, None); }
             });
         });
     });
+    for (kind, slot, id) in acts {
+        match kind {
+            1 => m.unload_spool(id),
+            2 => { if let Err(e) = m.load_spool(id, k, slot) { m.log(Sev::Warn, "spools", &e); } }
+            9 => { m.st.confirm_rm = None; m.unpair(k); m.st.sel_fleet = 0; }
+            _ => {}
+        }
+    }
+
+    if m.st.add_open {
+        let mut open = true;
+        egui::Window::new("Add machine").open(&mut open).collapsible(false).resizable(false).show(ui.ctx(), |ui| {
+            egui::Grid::new("add_machine").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+                ui.label(dim("Name"));
+                ui.add(egui::TextEdit::singleline(&mut m.st.add_name).desired_width(190.0));
+                ui.end_row();
+                ui.label(dim("Address"));
+                ui.add(egui::TextEdit::singleline(&mut m.st.add_ip).desired_width(190.0).hint_text("10.0.4.x"));
+                ui.end_row();
+                ui.label(dim("Model"));
+                egui::ComboBox::from_id_salt("add_model").width(190.0).selected_text(["Tomahawk", "Dev bench", "Other"][m.st.add_model]).show_ui(ui, |ui| {
+                    for (i, n) in ["Tomahawk", "Dev bench", "Other"].iter().enumerate() { ui.selectable_value(&mut m.st.add_model, i, *n); }
+                });
+                ui.end_row();
+                ui.label(dim("Group"));
+                egui::ComboBox::from_id_salt("add_group").width(190.0).selected_text(GROUPS[m.st.add_group]).show_ui(ui, |ui| {
+                    for (i, n) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.add_group, i, *n); }
+                });
+                ui.end_row();
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let ok = !m.st.add_name.trim().is_empty() && !m.fleet.iter().any(|f| f.name == m.st.add_name.trim());
+                ui.add_enabled_ui(ok, |ui| {
+                    if primary(ui, "Add machine") {
+                        let model: &'static str = ["Tomahawk", "Dev bench", "Other"][m.st.add_model];
+                        let idx = m.fleet.len() as u32;
+                        let f = crate::fleetsim::machine(idx, m.st.add_name.trim().to_string(), m.st.add_ip.trim().to_string(), model, m.st.add_group, MState::Idle, None, "1.4.1", (13, 13), Status::Ok, if model == "Dev bench" { 0 } else { 3 });
+                        m.fleet.push(f);
+                        let n = m.st.add_name.trim().to_string();
+                        m.log(Sev::Info, "farm", &format!("Added machine {} manually", n));
+                        m.st.add_open = false;
+                    }
+                });
+                if button(ui, "Cancel") { m.st.add_open = false; }
+                if !ok { ui.label(dim("Enter a unique name")); }
+            });
+        });
+        if !open { m.st.add_open = false; }
+    }
+}
+
+/// Why a queued job is not running yet.
+fn blocker(m: &Model, q: &QJob) -> String {
+    let idle: Vec<usize> = (0..m.fleet.len()).filter(|&i| m.fleet[i].state == MState::Idle && m.fleet[i].group != 2 && m.fleet[i].health != Status::Err && q.target.map_or(true, |t| t == i)).collect();
+    if idle.is_empty() {
+        return "waiting for an idle machine".into();
+    }
+    if !idle.iter().any(|&i| m.has_material(i, q.material, q.file)) {
+        return format!("no idle machine has {} loaded", q.material);
+    }
+    if m.auto_dispatch { "ready - dispatching".into() } else { "ready (auto-dispatch off)".into() }
 }
 
 fn queue(ui: &mut Ui, m: &mut Model) {
@@ -215,7 +353,7 @@ fn queue(ui: &mut Ui, m: &mut Model) {
             });
             ui.add_space(4.0);
             if primary(ui, "Add to queue") {
-                let (file, material, mins) = JOBS[m.st.q_file];
+                let (file, material, mins, _) = JOBS[m.st.q_file];
                 let target = if m.st.q_target == 0 { None } else { Some(m.st.q_target - 1) };
                 let id = m.next_qid;
                 m.next_qid += 1;
@@ -235,19 +373,19 @@ fn queue(ui: &mut Ui, m: &mut Model) {
         if m.queue.is_empty() { ui.label(dim("Queue empty.")); }
         let mut act: Option<(usize, u8)> = None;
         egui::Grid::new("q_tbl").num_columns(9).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
-            for h in ["#", "File", "Material", "Est.", "Left", "Priority", "Machine", "Status", ""] { th(ui, h); }
+            for h in ["#", "File", "Needs", "Est.", "Left", "Priority", "Machine", "Status", ""] { th(ui, h); }
             ui.end_row();
             for (k, q) in m.queue.iter().enumerate() {
                 ui.label(mono(q.id.to_string()));
                 ui.label(mono(q.file));
-                ui.label(q.material);
+                ui.label(mono(format!("{} {:.0} g", q.material, JOBS.iter().find(|j| j.0 == q.file).map(|j| j.3).unwrap_or(0.0))));
                 ui.label(mono(format!("{}h{:02}", q.mins / 60, q.mins % 60)));
                 ui.label(mono(q.left.to_string()));
                 ui.label(["low", "normal", "high"][q.prio]);
                 ui.label(dim(q.target.and_then(|t| m.fleet.get(t)).map(|f| f.name.clone()).unwrap_or("any idle".into())));
                 match q.running.and_then(|r| m.fleet.get(r)) {
                     Some(f) => ui.horizontal(|ui| { status(ui, Status::Ok, &format!("running on {}", f.name)); bar(ui, f.prog, 50.0, None); }).response,
-                    None => ui.label(dim("waiting")),
+                    None => { let b = blocker(m, q); ui.label(if b.starts_with("no ") { RichText::new(b).color(WARN) } else { dim(b) }) }
                 };
                 ui.horizontal(|ui| {
                     if crate::ui::sbtn(ui, "up").clicked() { act = Some((k, 0)); }
@@ -366,72 +504,6 @@ fn alerts(ui: &mut Ui, m: &mut Model) {
             Some((k, 0)) => m.alerts[k].ack = true,
             Some((k, _)) => { let i = m.alerts[k].machine; m.switch_machine(i); m.goto = Some(Page::Dashboard); }
             None => {}
-        }
-    });
-}
-
-fn spools(ui: &mut Ui, m: &mut Model) {
-    panel(ui, "Stock by material", |ui| {
-        ui.horizontal(|ui| {
-            ui.label(dim("Low-stock threshold per spool"));
-            ui.add(DragValue::new(&mut m.low_thr).range(20.0..=500.0).suffix(" g"));
-        });
-        egui::Grid::new("stock").num_columns(6).striped(true).spacing([20.0, 6.0]).show(ui, |ui| {
-            for h in ["Material", "Spools", "Loaded", "In stock", "Total", "Status"] { th(ui, h); }
-            ui.end_row();
-            for mat in ["PLA", "PETG", "ASA", "PA-CF"] {
-                let all: Vec<&FSpool> = m.fspools.iter().filter(|s| s.mat == mat).collect();
-                let loaded: f32 = all.iter().filter(|s| s.machine.is_some()).map(|s| s.left).sum();
-                let stock: f32 = all.iter().filter(|s| s.machine.is_none()).map(|s| s.left).sum();
-                let lowc = all.iter().filter(|s| s.left < m.low_thr).count();
-                ui.label(mono(mat));
-                ui.label(mono(all.len().to_string()));
-                ui.label(mono(format!("{:.1} kg", loaded / 1000.0)));
-                ui.label(mono(format!("{:.1} kg", stock / 1000.0)));
-                ui.label(mono(format!("{:.1} kg", (loaded + stock) / 1000.0)));
-                if stock < 1500.0 { status(ui, Status::Warn, "reorder soon"); } else if lowc > 0 { status(ui, Status::Warn, &format!("{} spool(s) low", lowc)); } else { status(ui, Status::Ok, "ok"); }
-                ui.end_row();
-            }
-        });
-    });
-    panel(ui, "Spool database (synced to every machine)", |ui| {
-        let mut act: Option<(usize, u8, usize)> = None;
-        egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("fspools").num_columns(7).striped(true).spacing([16.0, 5.0]).show(ui, |ui| {
-                for h in ["ID", "Brand", "Material", "Colour", "Remaining", "Location", ""] { th(ui, h); }
-                ui.end_row();
-                for (k, s) in m.fspools.iter().enumerate() {
-                    ui.label(mono(format!("#{}", s.id)));
-                    ui.label(s.brand);
-                    ui.label(s.mat);
-                    ui.label(s.color);
-                    ui.horizontal(|ui| { bar(ui, s.left / s.total, 70.0, if s.left < m.low_thr { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left))); });
-                    ui.label(match s.machine { Some(i) => m.fleet.get(i).map(|f| f.name.clone()).unwrap_or_default(), None => "stock".into() });
-                    ui.horizontal(|ui| {
-                        if s.left < m.low_thr && crate::ui::sbtn(ui, "replace").clicked() { act = Some((k, 0, 0)); }
-                        if s.machine.is_some() {
-                            if crate::ui::sbtn(ui, "to stock").clicked() { act = Some((k, 1, 0)); }
-                        } else {
-                            ui.menu_button("assign", |ui| {
-                                for (i, f) in m.fleet.iter().enumerate().filter(|(_, f)| f.group != 2) {
-                                    if ui.button(&f.name).clicked() { act = Some((k, 2, i)); ui.close_menu(); }
-                                }
-                            });
-                        }
-                    });
-                    ui.end_row();
-                }
-            });
-        });
-        match act {
-            Some((k, 0, _)) => m.fspools[k].left = m.fspools[k].total,
-            Some((k, 1, _)) => m.fspools[k].machine = None,
-            Some((k, _, i)) => m.fspools[k].machine = Some(i),
-            None => {}
-        }
-        if button(ui, "Add spool to stock") {
-            let id = m.fspools.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-            m.fspools.push(FSpool { id, brand: "New", mat: "PLA", color: "Black", left: 1000.0, total: 1000.0, machine: None });
         }
     });
 }

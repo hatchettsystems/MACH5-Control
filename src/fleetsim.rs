@@ -8,13 +8,13 @@ pub const SPEEDUP: f32 = 30.0;
 pub const GROUPS: [&str; 3] = ["Row A", "Row B", "Dev bench"];
 pub const TARGET_FW: &str = "1.4.3";
 /// Jobs the farm can run: (file, material, minutes).
-pub const JOBS: [(&str, &str, u32); 6] = [
-    ("housing_set_v7.gcode", "PA-CF", 460),
-    ("benchy_calib.gcode", "PETG", 62),
-    ("enclosure_panel_left.gcode", "ASA", 318),
-    ("gear_train_x6.gcode", "PLA", 205),
-    ("pa_calib_tower.gcode", "PETG", 18),
-    ("mmu_test_4color.gcode", "PLA", 144),
+pub const JOBS: [(&str, &str, u32, f32); 6] = [
+    ("housing_set_v7.gcode", "PA-CF", 460, 312.0),
+    ("benchy_calib.gcode", "PETG", 62, 14.0),
+    ("enclosure_panel_left.gcode", "ASA", 318, 186.0),
+    ("gear_train_x6.gcode", "PLA", 205, 98.0),
+    ("pa_calib_tower.gcode", "PETG", 18, 6.0),
+    ("mmu_test_4color.gcode", "PLA", 144, 71.0),
 ];
 
 pub fn mat_temps(mat: &str) -> [f32; 3] {
@@ -58,6 +58,7 @@ pub fn machine(idx: u32, name: String, ip: String, model: &'static str, group: u
         jobs_done: 40 + (hs(idx, 4) * 160.0) as u32, hours: 300.0 + hs(idx, 5) * 1500.0,
         grams: 8000.0 + hs(idx, 6) * 80000.0, fails: 1 + (hs(idx, 7) * 4.0) as u32,
         util: std::array::from_fn(|d| 0.35 + 0.6 * hs(idx * 7 + d as u32, 9)),
+        nozzle: 0.4, slots: if model == "Dev bench" { 1 } else { 4 }, notes: String::new(),
     }
 }
 
@@ -187,7 +188,7 @@ impl Model {
         self.log(Sev::Info, "farm", &format!("{}: fault cleared by host command", n));
     }
     pub fn m_start(&mut self, i: usize, job: usize) {
-        let (file, mat, mins) = JOBS[job];
+        let (file, mat, mins, _) = JOBS[job];
         self.with_machine(i, |f| {
             f.state = MState::Printing;
             f.file = file.into();
@@ -238,7 +239,11 @@ impl Model {
             fix(&mut q.running);
         }
         for s in self.fspools.iter_mut() {
-            fix(&mut s.machine);
+            match s.loc {
+                Loc::Machine(x) if x == i => { s.loc = Loc::Shelf; s.slot = 0; s.history.push(format!("Returned to shelf: {} removed from the farm", name)); }
+                Loc::Machine(x) if x > i => s.loc = Loc::Machine(x - 1),
+                _ => {}
+            }
         }
         self.alerts.retain(|a| a.machine != i);
         for a in self.alerts.iter_mut() {
@@ -285,6 +290,7 @@ impl Model {
                 self.finish_job(i);
             }
         }
+        self.poll_prints();
         self.farm_t += dt;
         if self.farm_t >= 1.0 {
             self.farm_t -= 1.0;
@@ -314,25 +320,44 @@ impl Model {
         if self.done_log.len() > 12 {
             self.done_log.remove(0);
         }
+        if let Some(si) = self.loaded_with(i, self.fleet[i].material) {
+            let (id, g) = (self.fspools[si].id, JOBS.iter().find(|j| j.0 == file).map(|j| j.3).unwrap_or(0.0));
+            self.spool_log(id, &format!("Used {:.0} g printing {} on {}", g, file, name));
+        }
         self.alert(i, Sev::Info, &format!("Print complete: {}", file));
     }
 
     fn farm_second(&mut self) {
-        // spool consumption
+        // spool consumption: each printing machine draws from the loaded spool of its material
         let mut low = Vec::new();
-        for s in self.fspools.iter_mut() {
-            if let Some(i) = s.machine {
-                if self.fleet[i].state == MState::Printing {
+        let mut dry = Vec::new();
+        for i in 0..self.fleet.len() {
+            if self.fleet[i].state != MState::Printing {
+                continue;
+            }
+            let (mat, total, file) = (self.fleet[i].material, self.fleet[i].total.max(1.0), self.fleet[i].file.clone());
+            let grams = JOBS.iter().find(|j| j.0 == file).map(|j| j.3).unwrap_or(100.0);
+            let g = grams * SPEEDUP / total;
+            match self.loaded_with(i, mat) {
+                Some(si) => {
+                    let s = &mut self.fspools[si];
                     let prev = s.left;
-                    s.left = (s.left - 0.05 * SPEEDUP).max(0.0);
-                    if prev >= self.low_thr && s.left < self.low_thr {
-                        low.push((i, s.left, s.mat));
-                    }
+                    s.left = (s.left - g).max(0.0);
+                    s.used += g;
+                    if prev >= self.low_thr && s.left < self.low_thr { low.push((i, s.left, s.mat.clone(), s.id)); }
+                    if prev > 5.0 && s.left <= 5.0 { dry.push((i, s.mat.clone(), s.id)); }
                 }
+                None => {}
             }
         }
-        for (i, g, m) in low {
-            self.alert(i, Sev::Warn, &format!("Spool low: {} {:.0} g left", m, g));
+        for (i, g, m, id) in low {
+            self.alert(i, Sev::Warn, &format!("Spool low: {} {} {:.0} g left", crate::spools::code(id), m, g));
+            self.spool_log(id, &format!("Low: {:.0} g remaining", g));
+        }
+        for (i, m, id) in dry {
+            self.alert(i, Sev::Err, &format!("Spool empty: {} {} - swap spool", crate::spools::code(id), m));
+            self.spool_log(id, "Ran empty during a print");
+            self.m_pause(i);
         }
         for f in self.fleet.iter_mut() {
             if f.state == MState::Printing {
@@ -355,6 +380,12 @@ impl Model {
         }
     }
 
+    /// A machine can take a job only if it has a spool of the right material with enough left.
+    pub fn has_material(&self, machine: usize, mat: &str, file: &str) -> bool {
+        let need = JOBS.iter().find(|j| j.0 == file).map(|j| j.3).unwrap_or(100.0);
+        self.loaded(machine).iter().any(|&i| self.fspools[i].mat == mat && self.fspools[i].left >= need * 0.9)
+    }
+
     fn dispatch(&mut self) {
         if !self.auto_dispatch {
             return;
@@ -367,7 +398,7 @@ impl Model {
                 .queue
                 .iter()
                 .enumerate()
-                .filter(|(_, q)| q.running.is_none() && q.left > 0 && q.target.map_or(true, |t| t == i))
+                .filter(|(_, q)| q.running.is_none() && q.left > 0 && q.target.map_or(true, |t| t == i) && self.has_material(i, q.material, q.file))
                 .max_by_key(|(_, q)| (q.prio, std::cmp::Reverse(q.id)))
                 .map(|(k, _)| k);
             if let Some(k) = pick {
@@ -462,28 +493,60 @@ impl Model {
 
     /// Seed queue, spool stock and alert history so every farm tab has content.
     pub fn seed_farm(&mut self) {
-        let brands = ["Polymaker", "Prusament", "Elegoo", "eSun", "Sunlu", "Fiberon"];
-        let colors = ["Black", "White", "Grey", "Red", "Natural", "Galaxy Black", "Blue"];
-        let mut id = 1;
-        for i in 0..self.fleet.len() {
+        let brands = ["Polymaker", "Prusament", "Elegoo", "eSun", "Sunlu", "Fiberon", "Bambu Lab", "Overture"];
+        let colors = ["Black", "White", "Grey", "Red", "Natural", "Galaxy Black", "Blue", "Orange"];
+        let mats_cycle = ["PLA", "PETG", "ASA", "PA-CF"];
+        let nm = self.fleet.len();
+        let make = |me: &mut Model, mat: &str, loc: Loc, slot: u8, shelf: &str, k: u32| {
+            let id = me.next_spool;
+            me.next_spool += 1;
+            let net = if mat == "PA-CF" { 750.0 } else { 1000.0 };
+            let left = if k % 11 == 3 { 92.0 } else { 140.0 + hs(id, 11) * (net - 140.0) };
+            let loaded = matches!(loc, Loc::Machine(_));
+            let day = 1 + (id % 27);
+            let hyg = crate::spools::hygroscopic(mat);
+            me.fspools.push(FSpool {
+                id, brand: brands[(id as usize) % 8].into(), mat: mat.into(), color: colors[(id as usize * 3) % 8].into(),
+                dia: 1.75, net, tare: 230.0, left, cost: if mat == "PA-CF" { 54.0 } else { 21.0 + (id % 5) as f32 * 3.0 },
+                supplier: ["Filament Direct", "Amazon", "Manufacturer"][(id % 3) as usize].into(), lot: format!("L{}-{:03}", 2400 + id % 9, id * 7 % 1000),
+                bought: format!("2026-{:02}-{:02}", 7 + id % 3, day), dried: if hyg && id % 4 != 0 { format!("2026-10-{:02}", 1 + id % 20) } else if hyg { "2026-08-12".into() } else { String::new() },
+                shelf: shelf.into(), loc, slot, notes: String::new(), printed: id % 7 != 0, used: net - left,
+                history: vec![format!("2026-10-{:02} 09:00:00  Created via entry workflow ({:.0} g net)", day, net)],
+            });
+            let _ = loaded;
+        };
+        let mut k = 0;
+        for i in 0..nm {
             if self.fleet[i].group == 2 {
                 continue;
             }
-            for slot in 0..2 {
-                let mat = if slot == 0 { self.fleet[i].material } else { ["PLA", "PETG", "ASA", "PA-CF"][(i + 1) % 4] };
-                let left = 160.0 + hs(id, 11) * 840.0;
-                self.fspools.push(FSpool { id, brand: brands[(id as usize) % 6], mat, color: colors[(id as usize * 3) % 7], left, total: 1000.0, machine: Some(i) });
-                id += 1;
+            let first = if self.fleet[i].file.is_empty() { mats_cycle[(i + 1) % 4] } else { self.fleet[i].material };
+            let second = mats_cycle[(i + 2) % 4];
+            make(self, first, Loc::Machine(i), 0, "A1", k);
+            make(self, second, Loc::Machine(i), 1, "A1", k + 1);
+            k += 2;
+        }
+        for j in 0..14 {
+            let mat = ["PLA", "PETG", "ASA", "PA-CF", "TPU", "PLA", "PETG"][j % 7];
+            let (loc, shelf) = if j % 7 == 6 { (Loc::Dryer, "Dry box") } else { (Loc::Shelf, SHELF[j % 5]) };
+            make(self, mat, loc, 0, shelf, k + j as u32);
+        }
+        make(self, "PA12-CF", Loc::Archived, 0, "C1", 99);
+        let aid = self.next_spool - 1;
+        self.fspools.last_mut().unwrap().left = 0.0;
+        let _ = aid;
+        let ids: Vec<u32> = self.fspools.iter().map(|s| s.id).collect();
+        for id in ids {
+            let l = self.fspools[self.spool_idx(id).unwrap()].loc.clone();
+            if let Loc::Machine(m) = l {
+                let n = self.mname(m);
+                let slot = self.fspools[self.spool_idx(id).unwrap()].slot;
+                self.spool_log(id, &format!("Loaded on {} slot T{}", n, slot));
             }
         }
-        for k in 0..9 {
-            let mat = ["PLA", "PETG", "ASA", "PA-CF"][k % 4];
-            let left = if k == 3 { 92.0 } else { 1000.0 - hs(id, 12) * 300.0 };
-            self.fspools.push(FSpool { id, brand: brands[(id as usize) % 6], mat, color: colors[(id as usize * 5) % 7], left, total: 1000.0, machine: None });
-            id += 1;
-        }
+        const SHELF: [&str; 5] = ["A1", "A2", "B1", "B2", "C1"];
         for (f, copies, prio) in [(3usize, 4u32, 1usize), (1, 6, 0), (5, 2, 1), (2, 2, 2), (4, 1, 2), (0, 1, 1)] {
-            let (file, material, mins) = JOBS[f];
+            let (file, material, mins, _) = JOBS[f];
             self.queue.push(QJob { id: self.next_qid, file, material, mins, left: copies, prio, target: None, running: None });
             self.next_qid += 1;
         }

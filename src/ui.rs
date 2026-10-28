@@ -74,12 +74,13 @@ pub fn frost_shape(ctx: &egui::Context, rect: Rect) -> Option<Shape> {
         for &x in &xs {
             let v = sample(egui::pos2(x, y));
             peak = peak.max(v);
-            let a = (v * 52.0).min(58.0) as u8;
+            let a = (v * 26.0).min(30.0) as u8;
             let k = (v * 1.3).clamp(0.0, 1.0) * 0.4;
+            let base = [120.0_f32, 134.0, 150.0];
             let col = Color32::from_rgba_unmultiplied(
-                (255.0 + (ACCENT.r() as f32 - 255.0) * k) as u8,
-                (255.0 + (ACCENT.g() as f32 - 255.0) * k) as u8,
-                (255.0 + (ACCENT.b() as f32 - 255.0) * k) as u8,
+                (base[0] + (ACCENT.r() as f32 - base[0]) * k) as u8,
+                (base[1] + (ACCENT.g() as f32 - base[1]) * k) as u8,
+                (base[2] + (ACCENT.b() as f32 - base[2]) * k) as u8,
                 a,
             );
             mesh.vertices.push(Vertex { pos: egui::pos2(x, y), uv: WHITE_UV, color: col });
@@ -150,6 +151,53 @@ pub fn sbtn(ui: &mut Ui, t: &str) -> egui::Response {
         ui.add(Button::new(RichText::new(t).size(12.0)).min_size(vec2(0.0, 24.0)))
     })
     .inner
+}
+
+/// Compact rotary knob. Hold the left button and drag up to increase, down to decrease;
+/// hold Shift for fine control, or use the scroll wheel to nudge.
+pub fn knob(ui: &mut Ui, val: &mut f32, range: (f32, f32), label: &str, unit: &str, decimals: usize) -> egui::Response {
+    let size = vec2(58.0, 66.0);
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    let span = range.1 - range.0;
+    let before = *val;
+    if resp.dragged() {
+        let fine = ui.input(|i| i.modifiers.shift);
+        *val -= resp.drag_delta().y * span / if fine { 700.0 } else { 150.0 };
+    }
+    if resp.hovered() {
+        let s = ui.input(|i| i.raw_scroll_delta.y);
+        if s != 0.0 {
+            *val += s.signum() * span / 100.0;
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if resp.double_clicked() {
+        *val = range.0;
+    }
+    *val = val.clamp(range.0, range.1);
+    if *val != before {
+        resp.mark_changed();
+    }
+    let t = if span > 0.0 { (*val - range.0) / span } else { 0.0 };
+    let c = egui::pos2(rect.center().x, rect.top() + 25.0);
+    let p = ui.painter();
+    let (a0, sweep) = (std::f32::consts::PI * 0.75, std::f32::consts::PI * 1.5);
+    let arc = |from: f32, to: f32, r: f32| -> Vec<egui::Pos2> {
+        let n = 36;
+        (0..=n).map(|k| { let a = a0 + sweep * (from + (to - from) * k as f32 / n as f32); c + vec2(a.cos(), a.sin()) * r }).collect()
+    };
+    p.add(Shape::line(arc(0.0, 1.0, 21.0), Stroke::new(3.0_f32, Color32::from_gray(44))));
+    if t > 0.003 {
+        p.add(Shape::line(arc(0.0, t, 21.0), Stroke::new(3.0_f32, if resp.dragged() || resp.hovered() { Color32::from_rgb(120, 214, 255) } else { ACCENT })));
+    }
+    let body = if resp.dragged() { Color32::from_gray(40) } else { Color32::from_gray(26) };
+    p.circle_filled(c, 15.5, body);
+    p.circle_stroke(c, 15.5, Stroke::new(1.0_f32, if resp.hovered() || resp.dragged() { Color32::from_gray(150) } else { Color32::from_gray(76) }));
+    let a = a0 + sweep * t;
+    p.line_segment([c + vec2(a.cos(), a.sin()) * 5.0, c + vec2(a.cos(), a.sin()) * 13.0], Stroke::new(2.0_f32, Color32::WHITE));
+    p.text(egui::pos2(rect.center().x, rect.top() + 49.0), Align2::CENTER_CENTER, format!("{:.*}{}", decimals, *val, unit), FontId::monospace(10.5), WHITE);
+    p.text(egui::pos2(rect.center().x, rect.top() + 61.0), Align2::CENTER_CENTER, label, FontId::proportional(10.5), DIM);
+    resp.on_hover_text(format!("{}: {:.*}{}\nDrag up / down to change, Shift = fine, scroll = nudge, double-click = minimum", label, decimals, *val, unit))
 }
 
 pub fn accent_bar(ui: &mut Ui, frac: f32, w: f32) {

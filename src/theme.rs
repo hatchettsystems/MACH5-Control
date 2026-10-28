@@ -102,7 +102,8 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(16.0, 7.0);
         s.spacing.interact_size.y = 30.0;
-        s.spacing.slider_width = 160.0;
+        s.spacing.slider_width = 96.0;
+        s.spacing.slider_rail_height = 3.0;
         s.spacing.scroll.bar_width = 6.0;
         s.visuals.striped = true;
         use egui::{FontFamily as F, FontId, TextStyle as T};

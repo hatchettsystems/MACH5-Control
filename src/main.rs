@@ -6,6 +6,7 @@ mod data;
 mod icons;
 mod fleetsim;
 mod pages;
+mod spools;
 mod theme;
 mod tour;
 mod ui;

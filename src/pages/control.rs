@@ -354,17 +354,18 @@ pub fn thermal(ui: &mut Ui, m: &mut Model) {
             ], (0.0, HIST as f32), (0.0, 300.0), "deg C");
         });
         panel(&mut c[1], "Fans", |ui| {
-            egui::Grid::new("fans").num_columns(4).spacing([14.0, 8.0]).show(ui, |ui| {
-                for h in ["Fan", "Node", "Speed", "RPM"] { th(ui, h); }
-                ui.end_row();
+            ui.horizontal_wrapped(|ui| {
                 for f in m.fans.iter_mut() {
-                    ui.label(f.name);
-                    ui.label(dim(f.node));
-                    ui.add(egui::Slider::new(&mut f.pct, 0.0..=100.0).suffix(" %"));
-                    ui.label(mono(format!("{:.0}", f.rpm_max * f.pct / 100.0)));
-                    ui.end_row();
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        knob(ui, &mut f.pct, (0.0, 100.0), f.name.split(' ').next().unwrap_or(f.name), "%", 0);
+                        ui.label(mono(format!("{:.0} rpm", f.rpm_max * f.pct / 100.0)).size(10.0).color(DIM));
+                        ui.label(dim(f.node).size(9.5));
+                    });
                 }
             });
+            ui.add_space(4.0);
+            ui.label(dim("Drag a knob up or down. Shift for fine control."));
         });
     });
 }

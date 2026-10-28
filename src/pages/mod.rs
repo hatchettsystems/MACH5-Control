@@ -6,6 +6,7 @@ mod control;
 mod dashboard;
 mod farm;
 mod hardware;
+mod spools;
 mod materials;
 mod system;
 mod tuning;
@@ -21,6 +22,7 @@ pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
         Page::Probe => tuning::probe(ui, m),
         Page::Drives => tuning::drives(ui, m),
         Page::Materials => materials::filament(ui, m),
+        Page::Spools => spools::spools(ui, m),
         Page::Camera => materials::camera(ui, m),
         Page::CanBus => hardware::can_bus(ui, m),
         Page::Nodes => hardware::nodes(ui, m),

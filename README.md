@@ -42,3 +42,11 @@ Click **Tutorial** at the bottom of the sidebar (or press F1) for a guided tour.
 app, spotlights the real on-screen element for each step with an animated pointer, and runs short live
 demos (machine switch, object exclusion, firmware flash, failure alert, roll-out, simulation).
 Arrow keys move between steps, Esc exits. `cargo run -- tour 12` starts at step 12.
+
+## Spool Inventory
+
+One shared spool database for the whole farm (nav: Materials > Spool Inventory). Entry workflow
+(manufacturer barcode, manual or copy), automatic IDs (`M5-SP-00042`), QR labels for thermal printers
+(ZPL, TSPL, ESC/POS, CPCL; network printers get raw data on port 9100, USB/Bluetooth get a file in
+`~/MACH5-labels`), weigh-in, load/unload per machine slot, history, dry-box log and low-stock tracking.
+The fleet queue only dispatches a job to a machine with enough of the right material loaded.

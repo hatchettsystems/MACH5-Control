@@ -6,6 +6,7 @@ description = "MACH5 Management Interface - front end prototype (mock data)"
 
 [dependencies]
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+qrcode = { version = "0.14", default-features = false }
 
 [profile.dev]
 opt-level = 1
