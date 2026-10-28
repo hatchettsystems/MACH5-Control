@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod data;
+mod fleetsim;
 mod pages;
 mod theme;
 mod ui;
@@ -40,6 +41,7 @@ fn main() -> eframe::Result {
             let mut m = Model::new();
             // Optional extra args pre-select tabs: `mach5-control calibration 3 0`
             m.st.tab = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            m.st.farm_tab = m.st.tab;
             m.st.tab2 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
             Ok(Box::new(App { m, page, nav_open: true }))
         }),
@@ -101,7 +103,18 @@ impl App {
                         ui.add_space(10.0);
                         ui::status(ui, self.m.state.status(), self.m.state.label());
                         ui.add_space(10.0);
-                        ui.label(ui::mono(format!("{}  10.0.4.21", self.m.name)));
+                        let mut pick = None;
+                        let cur = self.m.active;
+                        let label = format!("{}  {}", self.m.fleet[cur].name, self.m.fleet[cur].ip);
+                        egui::ComboBox::from_id_salt("machine_switch").width(190.0).selected_text(label).show_ui(ui, |ui| {
+                            for (i, f) in self.m.fleet.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui::dot(ui, f.state.status());
+                                    if ui.selectable_label(i == cur, format!("{}  {}", f.name, f.state.label())).clicked() { pick = Some(i); }
+                                });
+                            }
+                        });
+                        if let Some(i) = pick { self.m.switch_machine(i); }
                     });
                 });
             });
@@ -165,6 +178,8 @@ fn nav_alert(m: &Model, p: Page) -> Option<(Status, &'static str)> {
         Page::Nodes | Page::Firmware if m.nodes.iter().any(|n| n.fw != n.want) => Some((Status::Warn, "out of date")),
         Page::Nodes if m.nodes.iter().any(|n| n.status == Status::Err) => Some((Status::Err, "fault")),
         Page::Dashboard if m.state == data::MState::Fault => Some((Status::Err, "fault")),
+        Page::Fleet if m.alerts.iter().any(|a| !a.ack && a.sev == data::Sev::Err) => Some((Status::Err, "alerts")),
+        Page::Fleet if m.alerts.iter().any(|a| !a.ack && a.sev == data::Sev::Warn) => Some((Status::Warn, "alerts")),
         _ => None,
     }
 }

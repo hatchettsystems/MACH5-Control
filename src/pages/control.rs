@@ -42,7 +42,7 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
     title(ui, "Dashboard", &format!("{} - live telemetry, mock data", m.name));
     ui.columns(3, |c| {
         panel(&mut c[0], "Job", |ui| {
-            ui.label(mono(m.job.file).color(WHITE));
+            ui.label(mono(m.job.file.clone()).color(WHITE));
             ui.add_space(2.0);
             bar_full(ui, m.job.progress, None);
             let rem = m.job.total - m.job.elapsed;
@@ -351,7 +351,7 @@ pub fn print(ui: &mut Ui, m: &mut Model) {
             ui.horizontal(|ui| {
                 if primary(ui, "Print") {
                     let n = fname;
-                    m.job.file = n;
+                    m.job.file = n.to_string();
                     m.job.progress = 0.0;
                     m.job.elapsed = 0.0;
                     m.job.layer = 0;
@@ -431,7 +431,7 @@ pub fn print(ui: &mut Ui, m: &mut Model) {
             kv(ui, "plr", &[
                 ("Checkpoint", format!("layer {} / {} (flash)", m.job.layer, m.job.layers)),
                 ("Z restored", format!("{:.2} mm", m.pos[2])),
-                ("Thermal state", "hotend 250, bed 90, chamber 52".into()),
+                ("Thermal state", format!("hotend {:.0}, bed {:.0}, chamber {:.0}", m.heaters[0].cur, m.heaters[1].cur, m.heaters[2].cur)),
                 ("Written", "every layer, wear-levelled".into()),
             ]);
             ui.horizontal(|ui| {

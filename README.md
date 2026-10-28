@@ -19,6 +19,7 @@ Linux needs the usual windowing libraries (X11 or Wayland, `libxkbcommon`, OpenG
 | `src/theme.rs` | Black/grey/white palette; colour is used only for status |
 | `src/ui.rs` | Flat panel, tabs, bars, line plots, heat map |
 | `src/data.rs` | Mock machine model and simulated telemetry |
+| `src/fleetsim.rs` | Farm simulation: 10 machines printing at once, dispatcher, alerts, spool use, roll-out |
 | `src/pages/` | One function per page, grouped like the nav |
 
 ## Pages
@@ -26,3 +27,11 @@ Linux needs the usual windowing libraries (X11 or Wayland, `libxkbcommon`, OpenG
 Machine: Dashboard, Control, Print, Thermal. Tuning: Motion, Calibration, Eddy Probe, Drives.
 Materials: Filament (MMU, spools, profiles), Camera. Hardware: CAN FD Bus, Nodes, Firmware.
 System: Fleet, Config, Rules, API & Security, Simulator, Event Log, Spec & Roadmap.
+
+## Fleet (farm management)
+
+Ten Tomahawks and two dev benches run concurrently on a 30x simulation clock. Pick any machine
+in the top bar and every other page (dashboard, thermal, print, ...) shows that machine.
+Fleet tabs: Overview (bulk pause/resume/cancel/cool/send job/set group), Queue (auto-dispatch to idle
+machines), Cameras (live wall), Alerts (failure detection, auto-pause), Spools (shared stock),
+Analytics (utilisation, throughput) and Roll-out & discovery (staged firmware with health gates, pairing).

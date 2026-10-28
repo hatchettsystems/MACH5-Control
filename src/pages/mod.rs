@@ -2,6 +2,7 @@ use crate::data::{Model, Page};
 use eframe::egui::Ui;
 
 mod control;
+mod farm;
 mod hardware;
 mod materials;
 mod system;
@@ -25,7 +26,7 @@ pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
         Page::Config => system::config(ui, m),
         Page::Rules => system::rules(ui, m),
         Page::Api => system::api(ui, m),
-        Page::Fleet => system::fleet(ui, m),
+        Page::Fleet => farm::fleet(ui, m),
         Page::Simulator => system::simulator(ui, m),
         Page::Spec => system::spec(ui, m),
         Page::Logs => system::logs(ui, m),

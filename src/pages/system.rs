@@ -258,69 +258,6 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
     }
 }
 
-pub fn fleet(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Fleet", "Machines discovered on the network, farm status and staged firmware roll-out");
-    let sel = m.fleet.iter().filter(|f| f.sel).count();
-    panel(ui, "Machines", |ui| {
-        egui::Grid::new("fleet").num_columns(9).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
-            ui.label("");
-            for h in ["Name", "Address", "State", "Progress", "Firmware", "Nodes", "Health", ""] { th(ui, h); }
-            ui.end_row();
-            for (k, f) in m.fleet.iter_mut().enumerate() {
-                ui.checkbox(&mut f.sel, "");
-                ui.label(f.name).on_hover_text(f.model);
-                ui.label(mono(f.ip));
-                status(ui, f.state.status(), f.state.label());
-                ui.horizontal(|ui| { bar(ui, f.prog, 70.0, None); ui.label(mono(format!("{:.0}%", f.prog * 100.0))); });
-                ui.label(mono(f.fw));
-                ui.label(mono(format!("{}/{}", f.nodes.0, f.nodes.1)).color(if f.nodes.0 < f.nodes.1 { WARN } else { TEXT }));
-                status(ui, f.health, f.health.label());
-                if ui.small_button("open").clicked() { m.st.sel_fleet = k; m.goto = Some(Page::Dashboard); }
-                ui.end_row();
-            }
-        });
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(dim(format!("{} selected", sel)));
-            for n in ["Pause selected", "Send job...", "Cool down"] { button(ui, n); }
-        });
-    });
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Staged firmware roll-out", |ui| {
-            ui.label("Release 1.4.2 - signed OTA");
-            ui.add_space(4.0);
-            let waves = [("Wave 1 - canary", "1 machine (Bench-A)"), ("Wave 2", "3 machines"), ("Wave 3 - remainder", "8 machines")];
-            for (i, (n, d)) in waves.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    let st = if m.rollout.0 > i { Status::Ok } else if m.rollout.0 == i && m.rollout.2 { Status::Warn } else { Status::Idle };
-                    dot(ui, st);
-                    ui.label(*n);
-                    ui.label(dim(*d));
-                    if m.rollout.0 == i && m.rollout.2 { bar(ui, m.rollout.1, 80.0, None); }
-                });
-            }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if !m.rollout.2 {
-                    if primary(ui, "Start roll-out") { m.rollout = (0, 0.0, true); m.log(Sev::Info, "fleet", "Staged roll-out of 1.4.2 started"); }
-                } else if button(ui, "Pause") { m.rollout.2 = false; }
-            });
-            if m.rollout.0 >= 3 && !m.rollout.2 {
-                for f in m.fleet.iter_mut() { f.fw = "1.4.2"; }
-                ui.label(dim("Complete: every machine on 1.4.2"));
-            }
-        });
-        panel(&mut c[1], "Health gates between waves", |ui| {
-            for t in ["No node bootloader rollbacks", "No new fault events within 15 min", "Heartbeats and time sync nominal", "Print job unaffected (applied between jobs)"] {
-                ui.horizontal(|ui| { dot(ui, Status::Ok); ui.label(t); });
-            }
-            ui.add_space(4.0);
-            ui.label(dim("Machines announce themselves via discovery; unpaired machines appear here for pairing."));
-            ui.horizontal(|ui| { ui.label(mono("Tomahawk-11  10.0.4.31")); ui.label(dim("unpaired")); button(ui, "Pair"); });
-        });
-    });
-}
-
 pub fn simulator(ui: &mut Ui, m: &mut Model) {
     title(ui, "Simulator", "Host tooling: planner and a virtual CAN bus on the PC, so firmware is tested before hardware exists");
     ui.columns(2, |c| {

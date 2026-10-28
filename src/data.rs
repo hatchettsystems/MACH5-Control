@@ -96,7 +96,7 @@ impl MState {
 pub struct Obj { pub id: usize, pub name: &'static str, pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub excluded: bool }
 
 pub struct Job {
-    pub file: &'static str,
+    pub file: String,
     pub progress: f32,
     pub layer: u32,
     pub layers: u32,
@@ -126,7 +126,20 @@ pub struct Spool { pub id: u32, pub brand: &'static str, pub mat: &'static str, 
 pub struct Profile { pub name: &'static str, pub nozzle: f32, pub bed: f32, pub chamber: f32, pub pa: f32, pub flow: f32, pub fan: f32 }
 pub struct Slot { pub spool: Option<u32>, pub sensor: bool }
 
-pub struct FleetMachine { pub name: &'static str, pub model: &'static str, pub ip: &'static str, pub state: MState, pub prog: f32, pub fw: &'static str, pub nodes: (u8, u8), pub sel: bool, pub health: Status }
+pub struct FleetMachine {
+    pub name: String, pub model: &'static str, pub ip: String, pub group: usize,
+    pub state: MState, pub file: String, pub material: &'static str,
+    pub prog: f32, pub layer: u32, pub layers: u32, pub elapsed: f32, pub total: f32,
+    pub temps: [f32; 3], pub targets: [f32; 3],
+    pub fw: String, pub nodes: (u8, u8), pub sel: bool, pub health: Status,
+    pub fp: String, pub key_age: u32, pub wave: u8,
+    pub jobs_done: u32, pub hours: f32, pub grams: f32, pub fails: u32, pub util: [f32; 7],
+}
+pub struct QJob { pub id: u32, pub file: &'static str, pub material: &'static str, pub mins: u32, pub left: u32, pub prio: usize, pub target: Option<usize>, pub running: Option<usize> }
+pub struct FAlert { pub ts: String, pub machine: usize, pub sev: Sev, pub msg: String, pub ack: bool }
+pub struct FSpool { pub id: u32, pub brand: &'static str, pub mat: &'static str, pub color: &'static str, pub left: f32, pub total: f32, pub machine: Option<usize> }
+pub struct Disc { pub name: String, pub ip: String }
+pub struct Rollout { pub wave: usize, pub prog: f32, pub running: bool, pub halted: Option<String>, pub done: bool }
 pub struct Client { pub name: &'static str, pub kind: &'static str, pub fp: &'static str, pub scope: &'static str, pub seen: &'static str, pub revoked: bool, pub age: u32 }
 pub struct Rule { pub name: &'static str, pub on: bool, pub trigger: usize, pub cond: String, pub actions: Vec<String>, pub runs: u32 }
 
@@ -172,6 +185,16 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub farm_tab: usize,
+    pub q_file: usize,
+    pub q_copies: u32,
+    pub q_prio: usize,
+    pub q_target: usize,
+    pub grp_filter: usize,
+    pub al_filter: usize,
+    pub send_file: usize,
+    pub set_group: usize,
+    pub only_printing: bool,
 }
 
 pub struct Model {
@@ -179,7 +202,7 @@ pub struct Model {
     acc: f64,
     rng: u64,
     pub goto: Option<Page>,
-    pub name: &'static str,
+    pub name: String,
     pub state: MState,
     pub pos: [f32; 4],
     pub home: [bool; 3],
@@ -219,7 +242,22 @@ pub struct Model {
     pub clear_needed: bool,
     pub decisions: [bool; 8],
     pub phases_done: usize,
-    pub rollout: (usize, f32, bool),
+    pub rollout: Rollout,
+    pub active: usize,
+    pub queue: Vec<QJob>,
+    pub next_qid: u32,
+    pub auto_dispatch: bool,
+    pub auto_pause: bool,
+    pub alerts: Vec<FAlert>,
+    pub fspools: Vec<FSpool>,
+    pub disc: Vec<Disc>,
+    pub h_farm_n: VecDeque<f32>,
+    pub h_farm_g: VecDeque<f32>,
+    pub low_thr: f32,
+    pub farm_t: f64,
+    pub next_event: f64,
+    pub done_log: Vec<String>,
+    pub scan_n: u32,
     pub accel: [f32; 3],
     pub jerk: f32,
     pub snap: f32,
@@ -298,10 +336,10 @@ impl Model {
         let mut sy = VecDeque::new();
         for k in 0..HIST {
             let x = k as f32;
-            hot.push_back(250.0 + (x * 0.7).sin() * 0.4);
+            hot.push_back(275.0 + (x * 0.7).sin() * 0.4);
             bed.push_back(90.0 + (x * 0.2).sin() * 0.2);
             cham.push_back(52.0 + x * 0.002);
-            tgt.push_back(250.0);
+            tgt.push_back(275.0);
             ca.push_back(11.0 + (x * 0.3).sin() * 1.0);
             cb.push_back(24.0 + (x * 0.15).sin() * 5.0 + (x * 0.9).cos() * 2.0);
             fo.push_back(8.0 + (x * 0.5).sin() * 5.0);
@@ -310,13 +348,13 @@ impl Model {
 
         let mut m = Model {
             t: 0.0, acc: 0.0, rng: 0x2545_F491_4F6C_DD1D, goto: None,
-            name: "Tomahawk-01",
+            name: "Tomahawk-01".into(),
             state: MState::Printing,
             pos: [182.4, 96.1, 14.6, 1203.4],
             home: [true, true, true],
-            job: Job { file: "housing_set_v7.gcode", progress: 0.42, layer: 118, layers: 280, elapsed: 3.0 * 3600.0 + 1210.0, total: 7.0 * 3600.0 + 2400.0, speed: 100.0, flow: 98.0, objects },
+            job: Job { file: "housing_set_v7.gcode".into(), progress: 0.42, layer: 118, layers: 280, elapsed: 0.42 * 27600.0, total: 27600.0, speed: 100.0, flow: 98.0, objects },
             heaters: vec![
-                Heater { name: "Hotend", node: "Toolhead", cur: 250.0, target: 250.0, power: 38.0, max: 300.0, ctl: 1, wd_ms: 1500 },
+                Heater { name: "Hotend", node: "Toolhead", cur: 275.0, target: 275.0, power: 38.0, max: 300.0, ctl: 1, wd_ms: 1500 },
                 Heater { name: "Bed", node: "Mainboard", cur: 90.0, target: 90.0, power: 22.0, max: 120.0, ctl: 0, wd_ms: 3000 },
                 Heater { name: "Chamber", node: "Chamber IO", cur: 52.0, target: 60.0, power: 71.0, max: 80.0, ctl: 0, wd_ms: 3000 },
             ],
@@ -361,20 +399,7 @@ impl Model {
                 Profile { name: "TPU", nozzle: 230.0, bed: 50.0, chamber: 0.0, pa: 0.120, flow: 1.00, fan: 40.0 },
             ],
             slots: (0..8).map(|k| Slot { spool: if k < 4 { Some(k as u32 + 1) } else { None }, sensor: k < 4 }).collect(),
-            fleet: vec![
-                fm("Tomahawk-01", "Tomahawk", "10.0.4.21", MState::Printing, 0.42, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-02", "Tomahawk", "10.0.4.22", MState::Printing, 0.88, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-03", "Tomahawk", "10.0.4.23", MState::Idle, 0.0, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-04", "Tomahawk", "10.0.4.24", MState::Paused, 0.17, "1.4.1", (13, 13), Status::Warn),
-                fm("Tomahawk-05", "Tomahawk", "10.0.4.25", MState::Printing, 0.63, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-06", "Tomahawk", "10.0.4.26", MState::Fault, 0.31, "1.4.1", (12, 13), Status::Err),
-                fm("Tomahawk-07", "Tomahawk", "10.0.4.27", MState::Idle, 0.0, "1.4.1", (13, 13), Status::Ok),
-                fm("Tomahawk-08", "Tomahawk", "10.0.4.28", MState::Calibrating, 0.0, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-09", "Tomahawk", "10.0.4.29", MState::Printing, 0.05, "1.4.2", (13, 13), Status::Ok),
-                fm("Tomahawk-10", "Tomahawk", "10.0.4.30", MState::Idle, 0.0, "1.4.1", (13, 13), Status::Ok),
-                fm("Bench-A", "Dev bench", "10.0.9.2", MState::Idle, 0.0, "1.5.0-rc1", (6, 6), Status::Ok),
-                fm("Bench-B", "Dev bench", "10.0.9.3", MState::Idle, 0.0, "1.5.0-rc1", (4, 6), Status::Warn),
-            ],
+            fleet: crate::fleetsim::make_fleet(),
             clients: vec![
                 Client { name: "Desktop - JH-WORKSTATION", kind: "Management Interface", fp: "SHA256:7Qk2...c9Ad", scope: "admin", seen: "now", revoked: false, age: 41 },
                 Client { name: "Phone - JH-PIXEL", kind: "Phone port", fp: "SHA256:Lm81...Xv0f", scope: "operate", seen: "12 min ago", revoked: false, age: 40 },
@@ -399,7 +424,7 @@ impl Model {
             cal: Cal { running: false, step: 0, prog: 0.0 },
             fw: FwRun { running: false, prog: 0.0, idx: 0 },
             sim: Sim { running: false, prog: 0.0, results: Vec::new(), faults: [false; 4], log: Vec::new() },
-            st: St { extr_len: 10.0, pa_lo: 0.0, pa_hi: 0.1, tab: 0, ..Default::default() },
+            st: St { q_copies: 1, extr_len: 10.0, pa_lo: 0.0, pa_hi: 0.1, tab: 0, ..Default::default() },
             h_hot: hot, h_bed: bed, h_cham: cham, h_t_hot: tgt,
             h_can_a: ca, h_can_b: cb, h_follow: fo, h_sync: sy,
             mesh: Vec::new(),
@@ -407,7 +432,12 @@ impl Model {
             pa_value: 0.044,
             probe_driver: 0, probe_comp: true, clear_needed: false,
             decisions: [false; 8], phases_done: 1,
-            rollout: (0, 0.0, false),
+            rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
+            active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: true, auto_pause: true,
+            alerts: Vec::new(), fspools: Vec::new(),
+            disc: vec![Disc { name: "Tomahawk-11".into(), ip: "10.0.4.31".into() }, Disc { name: "Bench-C".into(), ip: "10.0.9.4".into() }],
+            h_farm_n: std::iter::repeat(10.0).take(HIST).collect(), h_farm_g: (0..HIST).map(|k| 1750.0 + (k as f32 * 0.7).sin() * 120.0).collect(),
+            low_thr: 150.0, farm_t: 0.0, next_event: 8.0, done_log: Vec::new(), scan_n: 0,
             accel: [6000.0, 6000.0, 400.0], jerk: 90000.0, snap: 8.0e6, vmax: 500.0, blend: 0.08,
             pa_smooth: 0.040, pa_on: true,
             mesh_adaptive: true, purge_adaptive: true, z_offset: -0.012,
@@ -424,6 +454,7 @@ impl Model {
         m.st.console.push("MACH5 console - typed commands are validated against the API schema".into());
         m.st.console.push("ok".into());
         m.seed_logs();
+        m.seed_farm();
         m
     }
 
@@ -457,7 +488,7 @@ impl Model {
         (self.rng % 10000) as f32 / 10000.0
     }
 
-    fn stamp(&self) -> String {
+    pub fn stamp(&self) -> String {
         let s = (self.t + 4360.0) as u32;
         format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
     }
@@ -474,7 +505,7 @@ impl Model {
             (Sev::Info, "can", "Segment B online 1M/4M, 5 nodes"),
             (Sev::Warn, "nodes", "MMU image 71be0d95 differs from signed manifest (want c04e77a1)"),
             (Sev::Info, "sync", "Master clock locked, max skew 38 us"),
-            (Sev::Info, "thermal", "Hotend target 250 C, within 0.4 C"),
+            (Sev::Info, "thermal", "Hotend target 275 C, within 0.4 C"),
             (Sev::Info, "job", "Start housing_set_v7.gcode (5 objects, PA-CF)"),
             (Sev::Warn, "chamber", "Door sensor reports open"),
             (Sev::Info, "chamber", "Door closed"),
@@ -508,8 +539,8 @@ impl Model {
         self.t += dt;
         // slow state, every frame
         if self.state == MState::Printing {
-            self.job.progress = (self.job.progress + dt as f32 / 7.0e4).min(1.0);
-            self.job.elapsed += dt as f32;
+            self.job.progress = (self.job.progress + dt as f32 * crate::fleetsim::SPEEDUP / self.job.total.max(1.0)).min(1.0);
+            self.job.elapsed += dt as f32 * crate::fleetsim::SPEEDUP;
             self.job.layer = (self.job.progress * self.job.layers as f32) as u32;
             let t = self.t as f32;
             self.pos = [150.0 + 80.0 * (t * 0.9).sin(), 120.0 + 70.0 * (t * 0.7).cos(), 0.0 + self.job.layer as f32 * 0.12, self.pos[3] + dt as f32 * 6.0];
@@ -566,16 +597,7 @@ impl Model {
                 self.sim.log.push("planner run complete: 2,418,771 segments, 0 queue underruns".into());
             }
         }
-        if self.rollout.2 {
-            self.rollout.1 += dt as f32 * 0.08;
-            if self.rollout.1 >= 1.0 {
-                self.rollout.1 = 0.0;
-                self.rollout.0 += 1;
-                if self.rollout.0 >= 3 {
-                    self.rollout.2 = false;
-                }
-            }
-        }
+        self.farm_tick(dt);
         // sampled state at 10 Hz
         self.acc += dt;
         if self.acc < 0.1 {
@@ -637,10 +659,6 @@ fn push(q: &mut VecDeque<f32>, v: f32) {
 
 fn drv(axis: &'static str, node: &'static str, motor: &'static str, irms: f32, follow: f32, temp: f32, ld: f32, _k: f32) -> Drive {
     Drive { axis, node, motor, status: Status::Ok, cur: irms, follow, enc: "MT6826S 15-bit OK", temp, vbus: 48.1, mode: 0, r: 1.1 + ld * 0.05, l: ld, kt: 0.42, poles: 50, tuned: "2026-10-20", irms }
-}
-
-fn fm(name: &'static str, model: &'static str, ip: &'static str, state: MState, prog: f32, fw: &'static str, nodes: (u8, u8), health: Status) -> FleetMachine {
-    FleetMachine { name, model, ip, state, prog, fw, nodes, sel: false, health }
 }
 
 fn config_sections() -> Vec<Section> {
