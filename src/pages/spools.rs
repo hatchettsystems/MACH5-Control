@@ -194,7 +194,7 @@ fn detail(ui: &mut Ui, m: &mut Model) {
                     for sh in SHELVES { if ui.button(sh).clicked() { act = Some(A::Shelf(sh.into())); ui.close_menu(); } }
                 });
                 if button(ui, "Mark dried") { act = Some(A::Dry); }
-                if primary(ui, "Print label") { act = Some(A::Label); }
+                if button(ui, "Print label") { act = Some(A::Label); }
             });
             ui.horizontal_wrapped(|ui| {
                 if button(ui, "Duplicate (new ID)") { act = Some(A::Dup); }
@@ -367,7 +367,7 @@ fn add_spools(ui: &mut Ui, m: &mut Model) {
             if !m.label.msg.is_empty() { ui.add_space(4.0); ui.label(dim(m.label.msg.clone())); }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if primary(ui, "Add another") { m.entry.step = 0; m.entry.created.clear(); m.entry.color.clear(); m.entry.lot.clear(); }
+                if button(ui, "Add another") { m.entry.step = 0; m.entry.created.clear(); m.entry.color.clear(); m.entry.lot.clear(); }
                 if button(ui, "Print labels") { m.label.sel = ids.clone(); m.st.tab = 2; }
                 if button(ui, "View in inventory") { m.st.tab = 0; }
             });

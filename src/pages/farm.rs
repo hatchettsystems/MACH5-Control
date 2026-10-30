@@ -62,7 +62,7 @@ fn summary(ui: &mut Ui, m: &mut Model) {
 fn overview(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Bulk actions", |ui| {
         ui.horizontal_wrapped(|ui| {
-            if primary(ui, "+ Add machine") {
+            if button(ui, "+ Add machine") {
                 m.st.add_open = true;
                 m.st.add_name = format!("Tomahawk-{:02}", m.fleet.len() + 1);
                 m.st.add_ip = format!("10.0.4.{}", 40 + m.fleet.len());
@@ -134,8 +134,8 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 ui.horizontal_wrapped(|ui| {
                     if sbtn(ui, "Open").clicked() { acts.push((i, 1)); }
                     match f.state {
-                        MState::Printing => { if sbtn(ui, "Pause").clicked() { acts.push((i, 2)); } }
-                        MState::Paused => { if sbtn(ui, "Resume").clicked() { acts.push((i, 3)); } }
+                        MState::Printing => { if icon_btn(ui, "pause", "Pause print", false) { acts.push((i, 2)); } }
+                        MState::Paused => { if icon_btn(ui, "play", "Resume print", true) { acts.push((i, 3)); } }
                         MState::Fault => { if sbtn(ui, "Clear fault").clicked() { acts.push((i, 4)); } }
                         _ => {}
                     }
@@ -200,7 +200,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
             kv(ui, "fm_id", &[("Firmware", m.fleet[k].fw.clone()), ("Client key", format!("{} ({} d)", m.fleet[k].fp, m.fleet[k].key_age))]);
             ui.horizontal_wrapped(|ui| {
                 if button(ui, "Rotate key") { m.fleet[k].key_age = 0; let n = m.fleet[k].name.clone(); m.log(Sev::Info, "farm", &format!("Key rotated for {}", n)); }
-                if button(ui, "Open dashboard") { m.switch_machine(k); m.goto = Some(Page::Dashboard); }
+                if ghost(ui, "Open dashboard") { m.switch_machine(k); m.goto = Some(Page::Dashboard); }
             });
             ui.add_space(4.0);
             let can_rm = k != m.active && m.fleet[k].state != MState::Printing;
@@ -248,7 +248,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 }
             });
             ui.add_space(4.0);
-            if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+            if ghost(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
         });
         panel(c.at(2), &format!("{} - history", m.fleet[k].name), |ui| {
             let f = &m.fleet[k];
@@ -389,10 +389,10 @@ fn queue(ui: &mut Ui, m: &mut Model) {
                 ui.label(dim(format!("Needs {} {:.0} g  -  est. {}h{:02}  -  {} left  -  priority {}  -  {}", q.material, grams, q.mins / 60, q.mins % 60, q.left, ["low", "normal", "high"][q.prio], q.target.and_then(|t| m.fleet.get(t)).map(|f| f.name.clone()).unwrap_or("any idle machine".into()))));
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
-                    if sbtn(ui, "Up").clicked() { act = Some((k, 0)); }
-                    if sbtn(ui, "Down").clicked() { act = Some((k, 1)); }
-                    if sbtn(ui, "Priority +").clicked() { act = Some((k, 2)); }
-                    if sbtn(ui, "Remove").clicked() { act = Some((k, 3)); }
+                    if icon_btn(ui, "up", "Move up", false) { act = Some((k, 0)); }
+                    if icon_btn(ui, "down", "Move down", false) { act = Some((k, 1)); }
+                    if sbtn(ui, "Raise priority").clicked() { act = Some((k, 2)); }
+                    if icon_btn(ui, "trash", "Remove from queue", false) { act = Some((k, 3)); }
                 });
             });
         }
@@ -498,7 +498,7 @@ fn alerts(ui: &mut Ui, m: &mut Model) {
                 ui.add(egui::Label::new(if a.ack { dim(a.msg.clone()) } else { RichText::new(a.msg.clone()).size(13.0) }).wrap());
                 ui.add_space(3.0);
                 ui.horizontal(|ui| {
-                    if !a.ack && sbtn(ui, "Acknowledge").clicked() { act = Some((k, 0)); }
+                    if !a.ack && icon_btn(ui, "check", "Acknowledge", false) { act = Some((k, 0)); }
                     if sbtn(ui, "Open machine").clicked() { act = Some((k, 1)); }
                 });
             });
@@ -581,7 +581,7 @@ fn rollout(ui: &mut Ui, m: &mut Model) {
             ui.horizontal(|ui| {
                 if !m.rollout.running {
                     if m.rollout.halted.is_some() || (m.rollout.wave > 0 && !m.rollout.done) {
-                        if primary(ui, "Resume roll-out") { m.rollout_gate(); if m.rollout.halted.is_none() { m.rollout.running = true; } }
+                        if button(ui, "Resume roll-out") { m.rollout_gate(); if m.rollout.halted.is_none() { m.rollout.running = true; } }
                     }
                     if primary(ui, if m.rollout.done { "Run again" } else { "Start roll-out" }) {
                         for f in m.fleet.iter_mut().filter(|f| f.wave > 0) { f.fw = "1.4.1".into(); }

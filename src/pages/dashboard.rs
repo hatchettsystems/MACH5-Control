@@ -34,7 +34,7 @@ const CARD_INFO: [(&str, Span); DASH_CARDS] = [
     ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Movement", Span::Half),
     ("Print parameters", Span::Half), ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half),
     ("Motion system", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half), ("Console", Span::Full),
-    ("Print history", Span::Full), ("Recent events", Span::Half), ("Objects and recovery", Span::Half),
+    ("Print history", Span::Half), ("Recent events", Span::Half), ("Objects and recovery", Span::Half),
 ];
 
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
@@ -192,8 +192,8 @@ fn p_camera(ui: &mut Ui, m: &mut Model, h: f32) {
             ui.label(dim("score 0.04"));
         });
         ui.horizontal(|ui| {
-            if button(ui, "Snapshot") { m.log(Sev::Info, "camera", "Snapshot saved"); }
-            if button(ui, "Open camera") { m.goto = Some(Page::Camera); }
+            if ghost(ui, "Snapshot") { m.log(Sev::Info, "camera", "Snapshot saved"); }
+            if ghost(ui, "Open camera") { m.goto = Some(Page::Camera); }
         });
     });
 }
@@ -208,7 +208,7 @@ fn p_filament(ui: &mut Ui, m: &mut Model, _h: f32) {
                 status(ui, Status::Warn, "No spool loaded");
                 ui.label(dim("Assign a spool from Fleet or Spool Inventory."));
                 ui.add_space(6.0);
-                if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+                if ghost(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
                 return;
             }
         };
@@ -318,7 +318,7 @@ fn p_mesh(ui: &mut Ui, m: &mut Model, h: f32) {
         ui.add_space(4.0);
         ramp_legend(ui, w, (lo, hi));
         ui.horizontal(|ui| {
-            if button(ui, "Open calibration") { m.st.tab = 1; m.goto = Some(Page::Calibration); }
+            if ghost(ui, "Open calibration") { m.st.tab = 1; m.goto = Some(Page::Calibration); }
             ui.label(dim("Hover for coordinates"));
         });
     });
@@ -342,7 +342,7 @@ fn p_nodes(ui: &mut Ui, m: &mut Model, h: f32) {
             });
             ui.add_space(4.0);
         }
-        if button(ui, "Open nodes") { m.goto = Some(Page::Nodes); }
+        if ghost(ui, "Open nodes") { m.goto = Some(Page::Nodes); }
     });
 }
 
@@ -380,7 +380,7 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
                     m.st.cmd = if m.st.hist_idx == 0 { String::new() } else { m.st.hist[n - m.st.hist_idx].clone() };
                 }
             }
-            let go = (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || primary(ui, "Send");
+            let go = (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || button(ui, "Send");
             if go && !m.st.cmd.trim().is_empty() {
                 let cmd = std::mem::take(&mut m.st.cmd);
                 run_cmd(m, cmd.trim());
@@ -391,9 +391,9 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
         ui.horizontal_wrapped(|ui| {
             ui.label(dim("Macros"));
             for (lbl, c) in [("Home all", "G28"), ("Mesh", "G29"), ("Level", "G32"), ("Pause", "PAUSE"), ("Resume", "RESUME"), ("Shaper test", "SHAPER_CALIBRATE"), ("Help", "HELP")] {
-                if sbtn(ui, lbl).clicked() { run_cmd(m, c); }
+                if chip_btn(ui, lbl) { run_cmd(m, c); }
             }
-            if sbtn(ui, "Cool down").clicked() { for h in m.heaters.iter_mut() { h.target = 0.0; } m.st.console.push("> cool down (all heaters off)".into()); m.st.console.push("ok".into()); }
+            if chip_btn(ui, "Cool down") { for h in m.heaters.iter_mut() { h.target = 0.0; } m.st.console.push("> cool down (all heaters off)".into()); m.st.console.push("ok".into()); }
         });
     });
 }
@@ -401,28 +401,60 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
 fn p_history(ui: &mut Ui, m: &mut Model, _h: f32) {
     panel(ui, "Print history", |ui| {
         let list = super::print::recent(m, 4);
-        if list.is_empty() { ui.label(dim("No prints yet.")); }
-        card_grid(ui, list.len(), 230.0, |ui, n, w| {
-            let h = &list[n];
-            let col = filament_rgb(h.color);
-            card_frame(ui, w, false, |ui| {
-                ui.horizontal_top(|ui| {
-                    thumb(ui, 76.0, &h.file, col);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.add(egui::Label::new(RichText::new(h.file.trim_end_matches(".gcode")).strong().size(13.0).color(WHITE)).truncate());
-                        match h.status { 0 => status(ui, Status::Ok, "Completed"), 1 => status(ui, Status::Warn, "Cancelled"), _ => status(ui, Status::Err, "Failed") }
-                        ui.horizontal(|ui| {
-                            color_chip(ui, h.mat, col);
-                            ui.label(mono(format!("{}h {:02}m", (h.secs / 3600.0) as u32, ((h.secs / 60.0) as u32) % 60)).size(12.0).color(WHITE));
-                        });
-                    });
-                });
-                ui.label(dim(format!("{:.0} g  -  {}", h.grams, h.ended)).size(11.5));
+        ui.horizontal(|ui| {
+            ui.label(dim("Last 4 prints"));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if icon_toggle(ui, "rows", "List view", m.st.hist_dash_list) { m.st.hist_dash_list = true; }
+                if icon_toggle(ui, "tiles", "Tile view", !m.st.hist_dash_list) { m.st.hist_dash_list = false; }
             });
         });
-        if button(ui, "Open print history") { m.goto = Some(Page::Print); }
+        ui.add_space(4.0);
+        if list.is_empty() { ui.label(dim("No prints yet.")); }
+        if m.st.hist_dash_list {
+            for h in &list {
+                let col = filament_rgb(h.color);
+                mini_row(ui, |ui| {
+                    thumb(ui, 38.0, &h.file, col);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.add(egui::Label::new(RichText::new(h.file.trim_end_matches(".gcode")).size(12.5).color(WHITE)).truncate());
+                        ui.horizontal(|ui| {
+                            color_chip(ui, h.mat, col);
+                            ui.label(mono(format!("{}h {:02}m", (h.secs / 3600.0) as u32, ((h.secs / 60.0) as u32) % 60)).size(11.5).color(DIM));
+                        });
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        match h.status { 0 => dot(ui, Status::Ok), 1 => dot(ui, Status::Warn), _ => dot(ui, Status::Err) }
+                        ui.label(dim(&h.ended[5..10]).size(11.5));
+                    });
+                });
+            }
+        } else {
+            card_grid(ui, list.len(), 112.0, |ui, n, w| {
+                let h = &list[n];
+                let col = filament_rgb(h.color);
+                card_frame(ui, w, false, |ui| {
+                    thumb(ui, ui.available_width(), &h.file, col);
+                    ui.add_space(4.0);
+                    ui.add(egui::Label::new(RichText::new(h.file.trim_end_matches(".gcode")).size(12.0).color(WHITE)).truncate());
+                    ui.horizontal(|ui| {
+                        match h.status { 0 => dot(ui, Status::Ok), 1 => dot(ui, Status::Warn), _ => dot(ui, Status::Err) }
+                        ui.label(mono(format!("{}h {:02}m", (h.secs / 3600.0) as u32, ((h.secs / 60.0) as u32) % 60)).size(11.0).color(DIM));
+                    });
+                });
+            });
+        }
+        if ghost(ui, "Open print history") { m.goto = Some(Page::Print); }
     });
+}
+
+fn mini_row(ui: &mut Ui, f: impl FnOnce(&mut Ui)) {
+    let w = ui.available_width();
+    Frame::new().fill(CARD).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(8).inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
+        ui.set_width(w - 18.0);
+        ui.horizontal(f);
+    });
+    ui.add_space(4.0);
 }
 
 fn p_events(ui: &mut Ui, m: &mut Model, h: f32) {
@@ -441,7 +473,7 @@ fn p_events(ui: &mut Ui, m: &mut Model, h: f32) {
             });
             ui.add_space(4.0);
         }
-        if button(ui, "Open event log") { m.goto = Some(Page::Logs); }
+        if ghost(ui, "Open event log") { m.goto = Some(Page::Logs); }
     });
 }
 
@@ -459,7 +491,7 @@ fn heater_row(ui: &mut Ui, m: &mut Model, k: usize, glyph: &str, col: Color32) {
                 });
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if button(ui, "OFF") { m.heaters[k].target = 0.0; }
+                if chip_btn(ui, "Off") { m.heaters[k].target = 0.0; }
                 let max = m.heaters[k].max;
                 stepper(ui, &mut m.heaters[k].target, (0.0, max), 5.0, " C");
             });
@@ -484,9 +516,9 @@ fn p_temps(ui: &mut Ui, m: &mut Model) {
         ui.horizontal_wrapped(|ui| {
             ui.label(dim("Preset"));
             for p in m.profiles.iter() {
-                if sbtn(ui, p.name).clicked() { m.heaters[0].target = p.nozzle; m.heaters[1].target = p.bed; m.heaters[2].target = p.chamber; }
+                if chip_btn(ui, p.name) { m.heaters[0].target = p.nozzle; m.heaters[1].target = p.bed; m.heaters[2].target = p.chamber; }
             }
-            if sbtn(ui, "All off").clicked() { for h in m.heaters.iter_mut() { h.target = 0.0; } }
+            if chip_btn(ui, "All off") { for h in m.heaters.iter_mut() { h.target = 0.0; } }
         });
     });
 }
@@ -565,7 +597,7 @@ fn p_params(ui: &mut Ui, m: &mut Model) {
             ("Shaper X", format!("{} {:.1} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq)),
             ("Shaper Y", format!("{} {:.1} Hz", SHAPERS[m.shapers[1].kind], m.shapers[1].freq)),
         ], 130.0);
-        if button(ui, "Open tuning") { m.goto = Some(Page::Motion); }
+        if ghost(ui, "Open tuning") { m.goto = Some(Page::Motion); }
     });
 }
 

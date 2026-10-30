@@ -262,6 +262,51 @@ pub fn glyph(p: &Painter, name: &str, c: Pos2, col: Color32, rot: f32) {
             ln(o(-5.5, 3.0), o(-1.0, 3.0));
             ln(o(-9.0, 9.0), o(9.0, -9.0));
         }
+        "trash" => {
+            ln(o(-8.0, -5.0), o(8.0, -5.0));
+            ln(o(-3.0, -5.0), o(-3.0, -8.0));
+            ln(o(3.0, -5.0), o(3.0, -8.0));
+            ln(o(-3.0, -8.0), o(3.0, -8.0));
+            p.add(Shape::line(vec![o(-6.0, -5.0), o(-5.0, 8.0), o(5.0, 8.0), o(6.0, -5.0)], s));
+            ln(o(-2.0, -2.0), o(-2.0, 5.0));
+            ln(o(2.0, -2.0), o(2.0, 5.0));
+        }
+        "play" => {
+            p.add(Shape::convex_polygon(vec![o(-5.0, -8.0), o(-5.0, 8.0), o(8.0, 0.0)], col, Stroke::NONE));
+        }
+        "pause" => {
+            p.rect_filled(R::from_min_max(c + vec2(-6.0, -7.0), c + vec2(-2.0, 7.0)), 1.0, col);
+            p.rect_filled(R::from_min_max(c + vec2(2.0, -7.0), c + vec2(6.0, 7.0)), 1.0, col);
+        }
+        "queue" => {
+            for dy in [-6.0_f32, -1.0, 4.0] {
+                ln(o(-8.0, dy), o(2.0, dy));
+            }
+            ln(o(5.5, 2.0), o(5.5, 8.0));
+            ln(o(2.5, 5.0), o(8.5, 5.0));
+        }
+        "up" => {
+            ln(o(-6.0, 3.0), o(0.0, -3.0));
+            ln(o(0.0, -3.0), o(6.0, 3.0));
+        }
+        "down" => {
+            ln(o(-6.0, -3.0), o(0.0, 3.0));
+            ln(o(0.0, 3.0), o(6.0, -3.0));
+        }
+        "check" => {
+            ln(o(-7.0, 0.0), o(-2.0, 5.0));
+            ln(o(-2.0, 5.0), o(7.0, -5.0));
+        }
+        "tiles" => {
+            p.rect_stroke(R::from_min_max(c + vec2(-8.0, -7.0), c + vec2(1.0, 7.0)), 1.5, s, StrokeKind::Middle);
+            p.rect_stroke(R::from_min_max(c + vec2(4.0, -7.0), c + vec2(8.0, -1.0)), 1.5, s, StrokeKind::Middle);
+            p.rect_stroke(R::from_min_max(c + vec2(4.0, 2.0), c + vec2(8.0, 7.0)), 1.5, s, StrokeKind::Middle);
+        }
+        "rows" => {
+            for dy in [-6.0_f32, 0.0, 6.0] {
+                p.rect_stroke(R::from_center_size(o(0.0, dy), vec2(16.0, 4.0)), 1.5, s, StrokeKind::Middle);
+            }
+        }
         "gantry" => {
             ln(o(-8.0, -6.0), o(8.0, -6.0));
             ln(o(-8.0, -6.0), o(-8.0, 7.0));

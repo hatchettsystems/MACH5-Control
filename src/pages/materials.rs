@@ -24,7 +24,7 @@ pub fn filament(ui: &mut Ui, m: &mut Model) {
                 });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if primary(ui, "Load selected") {
+                    if button(ui, "Load selected") {
                         m.mmu_state = 3;
                         m.mmu_verbs.push(format!("slot {} loaded", m.st.step + 1));
                     }
@@ -60,7 +60,7 @@ pub fn filament(ui: &mut Ui, m: &mut Model) {
                 if !m.mmu_verbs.is_empty() { ui.add_space(4.0); ui.label(dim(format!("last: {}", m.mmu_verbs.last().unwrap()))); }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+                    if ghost(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
                     ui.label(dim("Assign and unload spools per machine from Fleet or the inventory."));
                 });
             });

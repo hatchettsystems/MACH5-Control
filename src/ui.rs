@@ -240,14 +240,6 @@ pub fn adaptive(ui: &mut Ui, n: usize, f: impl FnOnce(&mut Cols)) {
     adaptive_w(ui, n, 420.0, f)
 }
 
-/// Compact button for rows and cards: still sized to its text, never clipped.
-pub fn sbtn(ui: &mut Ui, t: &str) -> egui::Response {
-    with_button_style(ui, false, |ui| {
-        ui.spacing_mut().button_padding = vec2(11.0, 3.0);
-        ui.add(Button::new(RichText::new(t).size(12.5).color(WHITE)).min_size(vec2(0.0, 26.0)))
-    })
-}
-
 /// Compact rotary knob. Hold the left button and drag up to increase, down to decrease;
 /// hold Shift for fine control, or use the scroll wheel to nudge.
 pub fn knob(ui: &mut Ui, val: &mut f32, range: (f32, f32), label: &str, unit: &str, decimals: usize) -> egui::Response {
@@ -326,43 +318,101 @@ pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
     ui.add_space(10.0);
 }
 
-/// Run `f` with button visuals overridden: accent-tinted fill and outline.
-fn with_button_style<R>(ui: &mut Ui, primary: bool, f: impl FnOnce(&mut Ui) -> R) -> R {
+#[derive(Clone, Copy, PartialEq)]
+enum BK {
+    /// the one main action of a form or card: solid accent
+    Primary,
+    /// ordinary action: dark with a thin neutral outline
+    Secondary,
+    /// row action: plain text, no box until hovered
+    Ghost,
+    /// chosen option in a filter row: tinted, not solid
+    Selected,
+}
+
+fn with_button_style<R>(ui: &mut Ui, kind: BK, f: impl FnOnce(&mut Ui) -> R) -> R {
     // Applied in place (not in a child ui) so buttons still wrap inside horizontal_wrapped rows.
     let saved = ui.style().clone();
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
     let v = ui.visuals_mut();
-    let (fill, hov, act, stroke, hstroke) = if primary {
-        (ACCENT, Color32::from_rgb(130, 218, 255), Color32::WHITE, ACCENT, Color32::WHITE)
-    } else {
-        (Color32::from_rgb(15, 36, 54), Color32::from_rgb(21, 58, 86), Color32::from_rgb(28, 80, 116), Color32::from_rgb(30, 98, 136), ACCENT)
+    let none = Stroke::NONE;
+    let (fill, hov, act, stroke, hstroke, fg, hfg) = match kind {
+        BK::Primary => (ACCENT, Color32::from_rgb(130, 218, 255), Color32::WHITE, Stroke::new(1.0_f32, ACCENT), Stroke::new(1.0_f32, Color32::WHITE), Color32::from_rgb(4, 14, 22), Color32::from_rgb(4, 14, 22)),
+        BK::Secondary => (Color32::from_rgb(20, 22, 27), Color32::from_rgb(30, 34, 42), Color32::from_rgb(40, 46, 56), Stroke::new(1.0_f32, Color32::from_rgb(58, 62, 72)), Stroke::new(1.0_f32, Color32::from_rgb(96, 112, 130)), Color32::from_rgb(226, 230, 236), Color32::WHITE),
+        BK::Ghost => (Color32::TRANSPARENT, Color32::from_rgba_unmultiplied(255, 255, 255, 16), Color32::from_rgba_unmultiplied(255, 255, 255, 28), none, none, Color32::from_rgb(168, 176, 188), Color32::WHITE),
+        BK::Selected => (Color32::from_rgb(14, 40, 60), Color32::from_rgb(20, 54, 80), Color32::from_rgb(26, 66, 96), Stroke::new(1.0_f32, Color32::from_rgb(30, 120, 168)), Stroke::new(1.0_f32, ACCENT), Color32::from_rgb(150, 218, 255), Color32::WHITE),
     };
     v.widgets.inactive.weak_bg_fill = fill;
     v.widgets.inactive.bg_fill = fill;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, stroke);
+    v.widgets.inactive.bg_stroke = stroke;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, fg);
     v.widgets.hovered.weak_bg_fill = hov;
     v.widgets.hovered.bg_fill = hov;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, hstroke);
+    v.widgets.hovered.bg_stroke = hstroke;
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, hfg);
     v.widgets.active.weak_bg_fill = act;
     v.widgets.active.bg_fill = act;
-    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, hstroke);
+    v.widgets.active.bg_stroke = hstroke;
+    v.widgets.active.fg_stroke = Stroke::new(1.0_f32, hfg);
     let r = f(ui);
     ui.set_style(saved);
     r
 }
 
-/// Main action: solid accent fill, dark text, sized to its label.
-
+/// The one main action of a form or card: solid accent fill.
 pub fn primary(ui: &mut Ui, t: &str) -> bool {
-    with_button_style(ui, true, |ui| ui.add(Button::new(RichText::new(t).color(Color32::from_rgb(4, 14, 22)).strong()).min_size(vec2(0.0, 32.0))).clicked())
+    with_button_style(ui, BK::Primary, |ui| ui.add(Button::new(RichText::new(t).strong()).min_size(vec2(0.0, 32.0))).clicked())
+}
+/// Ordinary button: dark, thin neutral outline.
+pub fn button(ui: &mut Ui, t: &str) -> bool {
+    with_button_style(ui, BK::Secondary, |ui| ui.add(Button::new(t).min_size(vec2(0.0, 32.0))).clicked())
 }
 /// Like `button`, but can be disabled without wrapping the button in a child ui.
 pub fn button_en(ui: &mut Ui, enabled: bool, t: &str) -> bool {
-    with_button_style(ui, false, |ui| ui.add_enabled(enabled, Button::new(RichText::new(t).color(WHITE)).min_size(vec2(0.0, 32.0))).clicked())
+    with_button_style(ui, BK::Secondary, |ui| ui.add_enabled(enabled, Button::new(t).min_size(vec2(0.0, 32.0))).clicked())
 }
-/// Standard button: accent-tinted dark fill with an accent outline, sized to its label.
-pub fn button(ui: &mut Ui, t: &str) -> bool {
-    with_button_style(ui, false, |ui| ui.add(Button::new(RichText::new(t).color(WHITE)).min_size(vec2(0.0, 32.0))).clicked())
+/// Plain-text action ("Open nodes"): no box until hovered.
+pub fn ghost(ui: &mut Ui, t: &str) -> bool {
+    with_button_style(ui, BK::Ghost, |ui| ui.add(Button::new(RichText::new(t).size(13.0)).min_size(vec2(0.0, 28.0))).clicked())
+}
+/// Small outlined chip-button: presets and macros.
+pub fn chip_btn(ui: &mut Ui, t: &str) -> bool {
+    with_button_style(ui, BK::Secondary, |ui| {
+        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.5)).min_size(vec2(0.0, 26.0))).clicked()
+    })
+}
+/// Compact row action: plain text.
+pub fn sbtn(ui: &mut Ui, t: &str) -> egui::Response {
+    with_button_style(ui, BK::Ghost, |ui| {
+        ui.spacing_mut().button_padding = vec2(8.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.5)).min_size(vec2(0.0, 26.0)))
+    })
+}
+/// Icon-only button with a tooltip. `accent` tints the icon with the accent colour.
+pub fn icon_btn(ui: &mut Ui, glyph: &str, tip: &str, accent: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+    let hot = resp.hovered();
+    if hot {
+        ui.painter().rect_filled(r, 7.0, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
+    }
+    let col = if accent { if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT } } else if hot { WHITE } else { Color32::from_rgb(160, 168, 180) };
+    crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), col, 0.0);
+    resp.on_hover_text(tip).clicked()
+}
+/// Toggle for a view mode: icon, tinted when selected.
+pub fn icon_toggle(ui: &mut Ui, glyph: &str, tip: &str, selected: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(vec2(30.0, 28.0), Sense::click());
+    let hot = resp.hovered();
+    if selected {
+        ui.painter().rect_filled(r, 7.0, Color32::from_rgb(14, 40, 60));
+        ui.painter().rect_stroke(r, 7.0, Stroke::new(1.0_f32, Color32::from_rgb(30, 120, 168)), StrokeKind::Inside);
+    } else if hot {
+        ui.painter().rect_filled(r, 7.0, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
+    }
+    let col = if selected { ACCENT } else if hot { WHITE } else { Color32::from_rgb(160, 168, 180) };
+    crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), col, 0.0);
+    resp.on_hover_text(tip).clicked()
 }
 pub fn danger(ui: &mut Ui, t: &str) -> bool {
     let r = ui.add(Button::new(RichText::new(t).color(Color32::WHITE).strong()).fill(Color32::from_rgb(150, 30, 30)).stroke(Stroke::new(1.0_f32, ERR)));
@@ -1275,10 +1325,10 @@ pub fn thumb(ui: &mut Ui, size: f32, name: &str, col: Color32) {
     draw_thumb(&ui.painter_at(r), r, name_hash(name), col);
 }
 
-/// Small choice button: solid accent when selected.
+/// Option in a filter row: plain text when off, tinted when chosen (never solid).
 pub fn choice_btn(ui: &mut Ui, selected: bool, t: &str) -> bool {
-    with_button_style(ui, selected, |ui| {
-        ui.spacing_mut().button_padding = vec2(12.0, 3.0);
-        ui.add(Button::new(RichText::new(t).size(12.5).color(if selected { Color32::from_rgb(4, 14, 22) } else { WHITE })).min_size(vec2(0.0, 26.0))).clicked()
+    with_button_style(ui, if selected { BK::Selected } else { BK::Ghost }, |ui| {
+        ui.spacing_mut().button_padding = vec2(11.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.5)).min_size(vec2(0.0, 26.0))).clicked()
     })
 }

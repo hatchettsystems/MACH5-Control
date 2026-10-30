@@ -119,7 +119,7 @@ pub fn nodes(ui: &mut Ui, m: &mut Model) {
             ui.horizontal(|ui| {
                 if button(ui, "Identify (blink LED)") { let nm = m.nodes[k].name; m.log(Sev::Info, "node", &format!("{} identify", nm)); }
                 if button(ui, "Reboot") { let nm = m.nodes[k].name; m.log(Sev::Warn, "node", &format!("{} reboot requested", nm)); }
-                if button(ui, "Open firmware") { m.goto = Some(Page::Firmware); }
+                if ghost(ui, "Open firmware") { m.goto = Some(Page::Firmware); }
             });
         });
         panel(c.at(1), "Addressing and discovery", |ui| {

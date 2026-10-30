@@ -202,7 +202,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                     ui.checkbox(&mut m.mesh_adaptive, "Adaptive mesh");
                     ui.checkbox(&mut m.purge_adaptive, "Adaptive purge");
                     ui.add_space(4.0);
-                    if primary(ui, "Re-mesh now") {
+                    if button(ui, "Re-mesh now") {
                         m.remesh();
                         m.log(Sev::Info, "mesh", "Bed mesh updated");
                     }
@@ -223,7 +223,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                         }
                     });
                     ui.add_space(6.0);
-                    if primary(ui, "Level gantry") {
+                    if button(ui, "Level gantry") {
                         m.tilt = [0.001, -0.001, 0.000];
                         m.log(Sev::Info, "level", "Gantry levelled, residual < 2 um");
                     }
@@ -243,7 +243,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                         let _ = ui.selectable_label(true, "Eddy probe ADXL345 (CAN B)");
                         let _ = ui.selectable_label(false, "Wireless ADXL module (WiFi)");
                     });
-                    if primary(ui, "Run test (X and Y)") {
+                    if button(ui, "Run test (X and Y)") {
                         m.st.res_done = true;
                         m.log(Sev::Info, "resonance", "Sweep complete on P4; shapers saved and applied");
                     }
@@ -322,7 +322,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                     plot(ui, 150.0, &[Series::new("corner bulge", G1, pts)], (m.st.pa_lo, m.st.pa_hi.max(m.st.pa_lo + 0.01)), (0.0, 1.0), "mm vs PA");
                     if m.st.pa_done {
                         ui.label(RichText::new("Best value 0.044 s").monospace().color(WHITE));
-                        if primary(ui, "Write to filament profile") {
+                        if button(ui, "Write to filament profile") {
                             let k = m.st.pa_profile;
                             m.profiles[k].pa = 0.044;
                             m.log(Sev::Info, "pa", &format!("Profile {} PA = 0.044", m.profiles[k].name));
@@ -391,7 +391,7 @@ pub fn probe(ui: &mut Ui, m: &mut Model) {
             ui.horizontal_wrapped(|ui| {
                 if button(ui, "Calibrate sensor") { m.log(Sev::Info, "probe", "Sensor calibration curve stored on probe node"); }
                 if button(ui, "Accuracy test x10") { m.st.probe_ok = true; }
-                if primary(ui, "Run unified auto-calibration") { m.st.tab = 0; m.goto = Some(Page::Calibration); }
+                if button(ui, "Run unified auto-calibration") { m.st.tab = 0; m.goto = Some(Page::Calibration); }
             });
             if m.st.probe_ok { kv(ui, "probe_acc", &[("Std dev", "0.0011 mm".into()), ("Range", "0.0034 mm".into()), ("Samples", "10".into())]); }
             ui.label(dim("Optional X/Y accelerometer (ADXL345) is read on the same node."));
@@ -447,7 +447,7 @@ pub fn drives(ui: &mut Ui, m: &mut Model) {
                 ui.end_row();
             });
             ui.add_space(6.0);
-            if primary(ui, "Self-characterise motor") {
+            if button(ui, "Self-characterise motor") {
                 d.tuned = "2026-10-28";
                 m.log(Sev::Info, "drive", "Motor characterised, tune values stored in config");
             }

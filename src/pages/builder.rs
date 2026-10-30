@@ -191,7 +191,7 @@ fn generated(ui: &mut Ui, m: &mut Model) {
     let text = m.bld.generate();
     panel(ui, "Generated config (read-only, Klipper-style)", |ui| {
         ui.horizontal(|ui| {
-            if primary(ui, "Copy to clipboard") { ui.ctx().copy_text(text.clone()); }
+            if button(ui, "Copy to clipboard") { ui.ctx().copy_text(text.clone()); }
             ui.label(dim(format!("{} lines. This is what the blocks compile to; the blocks stay the source of truth.", text.lines().count())));
         });
         ui.add_space(4.0);

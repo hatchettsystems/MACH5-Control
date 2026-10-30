@@ -273,6 +273,7 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub hist_dash_list: bool,
     pub file_list: bool,
     pub file_mat: usize,
     pub file_time: usize,

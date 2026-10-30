@@ -223,14 +223,14 @@ impl App {
             ui.add_space(4.0);
             if rail {
                 ui.vertical_centered(|ui| {
-                    if ui::primary(ui, "?") {
+                    if ui::button(ui, "?") {
                         self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
                     }
                 });
             } else {
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
-                    if ui::primary(ui, "Tutorial") {
+                    if ui::button(ui, "Tutorial") {
                         self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
                     }
                 });

@@ -115,8 +115,8 @@ fn filter_bar(ui: &mut Ui, m: &mut Model, shown: usize, total: usize) {
         egui::ComboBox::from_id_salt("file_sort").width(150.0).selected_text(["Sort: name", "Sort: newest", "Sort: print time", "Sort: filament", "Sort: most printed"][m.st.file_sort]).show_ui(ui, |ui| {
             for (i, n) in ["Sort: name", "Sort: newest", "Sort: print time", "Sort: filament", "Sort: most printed"].iter().enumerate() { ui.selectable_value(&mut m.st.file_sort, i, *n); }
         });
-        if choice_btn(ui, !m.st.file_list, "Cards") { m.st.file_list = false; }
-        if choice_btn(ui, m.st.file_list, "List") { m.st.file_list = true; }
+        if icon_toggle(ui, "tiles", "Card view", !m.st.file_list) { m.st.file_list = false; }
+        if icon_toggle(ui, "rows", "List view", m.st.file_list) { m.st.file_list = true; }
         if button(ui, "Upload") {
             let n = m.files.len() + 1;
             let name: &'static str = Box::leak(format!("uploaded_part_{}.gcode", n).into_boxed_str());
@@ -178,10 +178,10 @@ fn files(ui: &mut Ui, m: &mut Model) {
                     ui.label(dim(format!("{:.0} g  -  {} obj  -  {}x printed", f.grams, f.objects, f.printed)).size(11.5));
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        if choice_btn(ui, true, "Print") { act = Some((*i, 0)); }
-                        if sbtn(ui, "Queue").clicked() { act = Some((*i, 1)); }
-                        if sbtn(ui, "Delete").clicked() { act = Some((*i, 2)); }
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        if icon_btn(ui, "play", "Print this file", true) { act = Some((*i, 0)); }
+                        if icon_btn(ui, "queue", "Add to the farm queue", false) { act = Some((*i, 1)); }
+                        if icon_btn(ui, "trash", "Delete file", false) { act = Some((*i, 2)); }
                     });
                 });
             });
@@ -202,9 +202,9 @@ fn files(ui: &mut Ui, m: &mut Model) {
                             });
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if sbtn(ui, "Delete").clicked() { act = Some((*i, 2)); }
-                            if sbtn(ui, "Queue").clicked() { act = Some((*i, 1)); }
-                            if primary(ui, "Print") { act = Some((*i, 0)); }
+                            if icon_btn(ui, "trash", "Delete file", false) { act = Some((*i, 2)); }
+                            if icon_btn(ui, "queue", "Add to the farm queue", false) { act = Some((*i, 1)); }
+                            if icon_btn(ui, "play", "Print this file", true) { act = Some((*i, 0)); }
                         });
                     });
                 });
