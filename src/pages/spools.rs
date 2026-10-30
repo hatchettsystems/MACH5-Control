@@ -260,12 +260,14 @@ fn add_spools(ui: &mut Ui, m: &mut Model) {
                             }
                             ui.label(dim("USB barcode scanners type into this field."));
                         });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(dim("Sample barcodes"));
-                            for c in CATALOG.iter() {
-                                if sbtn(ui, &format!("{} {}", c.1, c.2)).clicked() { m.entry.gtin = c.0.into(); fill_from(&mut m.entry, c); m.st.scan_msg = format!("Found: {} {} {}", c.1, c.2, c.3); }
-                            }
-                        });
+                        let names: Vec<String> = CATALOG.iter().map(|c| format!("{} {}", c.1, c.2)).collect();
+                        let refs: Vec<&str> = names.iter().map(|x| x.as_str()).collect();
+                        if let Some(i) = menu_pick(ui, "Sample barcodes", &refs) {
+                            let c = &CATALOG[i];
+                            m.entry.gtin = c.0.into();
+                            fill_from(&mut m.entry, c);
+                            m.st.scan_msg = format!("Found: {} {} {}", c.1, c.2, c.3);
+                        }
                         if !m.st.scan_msg.is_empty() { ui.label(dim(m.st.scan_msg.clone())); }
                     }
                     2 => {

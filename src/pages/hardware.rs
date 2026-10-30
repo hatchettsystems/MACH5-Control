@@ -54,10 +54,7 @@ pub fn can_bus(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Frame monitor", |ui| {
         ui.horizontal(|ui| {
             ui.checkbox(&mut m.st.frames_paused, "Pause");
-            ui.label(dim("Segment"));
-            for (k, n) in ["All", "A", "B"].iter().enumerate() {
-                if ui.selectable_label(m.st.filter_node == k, *n).clicked() { m.st.filter_node = k; }
-            }
+            pick(ui, "seg_filter", "Segment", &["all", "A", "B"], &mut m.st.filter_node);
         });
         egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("frames").num_columns(6).spacing([16.0, 2.0]).show(ui, |ui| {

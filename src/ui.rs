@@ -134,6 +134,15 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
 
 /// A card with a minimum height, so cards in one row line up.
 pub fn panel_min(ui: &mut Ui, head: &str, min_h: f32, f: impl FnOnce(&mut Ui)) {
+    panel_inner(ui, head, min_h, None::<fn(&mut Ui)>, f)
+}
+
+/// A card whose header carries controls (dropdowns, view toggles) on its right-hand side.
+pub fn panel_h(ui: &mut Ui, head: &str, right: impl FnOnce(&mut Ui), f: impl FnOnce(&mut Ui)) {
+    panel_inner(ui, head, 0.0, Some(right), f)
+}
+
+fn panel_inner<R: FnOnce(&mut Ui)>(ui: &mut Ui, head: &str, min_h: f32, right: Option<R>, f: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
     let expect_right = ui.cursor().left() + w;
     // A page can mark the next card as draggable (id) so its header becomes a handle.
@@ -147,8 +156,14 @@ pub fn panel_min(ui: &mut Ui, head: &str, min_h: f32, f: impl FnOnce(&mut Ui)) {
         cu.set_width((w - 22.0).max(10.0));
         cu.set_min_height((min_h - 22.0).max(0.0));
         if !head.is_empty() {
+            // The drag handle is registered first, so controls added to the header sit on top of it.
+            let handle = drag_id.map(|id| {
+                let r = Rect::from_min_size(cu.cursor().min, vec2(cu.available_width(), 22.0));
+                (id, cu.interact(r, egui::Id::new(("card_hdr", id)), Sense::click_and_drag()))
+            });
             let hdr = cu.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
+                ui.style_mut().interaction.selectable_labels = false;
                 if drag_id.is_some() {
                     // grip: two columns of three dots
                     let (r, _) = ui.allocate_exact_size(vec2(10.0, 20.0), Sense::hover());
@@ -163,11 +178,12 @@ pub fn panel_min(ui: &mut Ui, head: &str, min_h: f32, f: impl FnOnce(&mut Ui)) {
                     crate::icons::glyph(&ui.painter().clone(), g, r.center(), Color32::from_gray(205), 0.0);
                 }
                 ui.add(egui::Label::new(disp(head, 16.0).color(WHITE)).truncate());
+                if let Some(r) = right {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| r(ui));
+                }
             });
-            if let Some(id) = drag_id {
-                let hr = hdr.response.rect;
-                let full = Rect::from_min_max(hr.min, egui::pos2(cu.max_rect().right(), hr.max.y));
-                let resp = cu.interact(full, egui::Id::new(("card_hdr", id)), Sense::click_and_drag());
+            let _ = hdr;
+            if let Some((id, resp)) = handle {
                 let ctx = cu.ctx().clone();
                 if resp.dragged() {
                     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -331,8 +347,6 @@ enum BK {
     Secondary,
     /// row action: plain text, no box until hovered
     Ghost,
-    /// chosen option in a filter row: tinted, not solid
-    Selected,
 }
 
 fn with_button_style<R>(ui: &mut Ui, kind: BK, f: impl FnOnce(&mut Ui) -> R) -> R {
@@ -345,7 +359,6 @@ fn with_button_style<R>(ui: &mut Ui, kind: BK, f: impl FnOnce(&mut Ui) -> R) -> 
         BK::Primary => (ACCENT, Color32::from_rgb(130, 218, 255), Color32::WHITE, Stroke::new(1.0_f32, ACCENT), Stroke::new(1.0_f32, Color32::WHITE), Color32::from_rgb(4, 14, 22), Color32::from_rgb(4, 14, 22)),
         BK::Secondary => (Color32::from_rgb(20, 22, 27), Color32::from_rgb(30, 34, 42), Color32::from_rgb(40, 46, 56), Stroke::new(1.0_f32, Color32::from_rgb(58, 62, 72)), Stroke::new(1.0_f32, Color32::from_rgb(96, 112, 130)), Color32::from_rgb(226, 230, 236), Color32::WHITE),
         BK::Ghost => (Color32::TRANSPARENT, Color32::from_rgba_unmultiplied(255, 255, 255, 16), Color32::from_rgba_unmultiplied(255, 255, 255, 28), none, none, Color32::from_rgb(168, 176, 188), Color32::WHITE),
-        BK::Selected => (Color32::from_rgb(14, 40, 60), Color32::from_rgb(20, 54, 80), Color32::from_rgb(26, 66, 96), Stroke::new(1.0_f32, Color32::from_rgb(30, 120, 168)), Stroke::new(1.0_f32, ACCENT), Color32::from_rgb(150, 218, 255), Color32::WHITE),
     };
     v.widgets.inactive.weak_bg_fill = fill;
     v.widgets.inactive.bg_fill = fill;
@@ -1389,10 +1402,35 @@ pub fn thumb(ui: &mut Ui, size: f32, name: &str, col: Color32) {
     draw_thumb(&ui.painter_at(r), r, name_hash(name), col);
 }
 
-/// Option in a filter row: plain text when off, tinted when chosen (never solid).
-pub fn choice_btn(ui: &mut Ui, selected: bool, t: &str) -> bool {
-    with_button_style(ui, if selected { BK::Selected } else { BK::Ghost }, |ui| {
-        ui.spacing_mut().button_padding = vec2(11.0, 3.0);
-        ui.add(Button::new(RichText::new(t).size(12.5)).min_size(vec2(0.0, 26.0))).clicked()
-    })
+
+/// Compact "Label: value" dropdown for a filter or mode. Returns true when the choice changed.
+pub fn pick(ui: &mut Ui, id: &str, label: &str, opts: &[&str], cur: &mut usize) -> bool {
+    let before = *cur;
+    let text = if label.is_empty() { opts[(*cur).min(opts.len() - 1)].to_string() } else { format!("{}: {}", label, opts[(*cur).min(opts.len() - 1)]) };
+    with_button_style(ui, BK::Secondary, |ui| {
+        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        egui::ComboBox::from_id_salt(id).selected_text(text).show_ui(ui, |ui| {
+            for (i, n) in opts.iter().enumerate() {
+                ui.selectable_value(cur, i, *n);
+            }
+        });
+    });
+    *cur != before
+}
+
+/// Dropdown of actions (presets, macros): returns the chosen index. Nothing stays selected.
+pub fn menu_pick(ui: &mut Ui, label: &str, items: &[&str]) -> Option<usize> {
+    let mut chosen = None;
+    with_button_style(ui, BK::Secondary, |ui| {
+        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        ui.menu_button(format!("{}  v", label), |ui| {
+            for (i, n) in items.iter().enumerate() {
+                if ui.button(*n).clicked() {
+                    chosen = Some(i);
+                    ui.close_menu();
+                }
+            }
+        });
+    });
+    chosen
 }

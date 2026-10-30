@@ -110,11 +110,11 @@ fn queue_file(m: &mut Model, i: usize) {
 
 fn filter_bar(ui: &mut Ui, m: &mut Model, shown: usize, total: usize) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(mono("gcodes /").color(DIM));
-        ui.add(egui::TextEdit::singleline(&mut m.st.file_q).hint_text("search files").desired_width(180.0));
-        egui::ComboBox::from_id_salt("file_sort").width(150.0).selected_text(["Sort: name", "Sort: newest", "Sort: print time", "Sort: filament", "Sort: most printed"][m.st.file_sort]).show_ui(ui, |ui| {
-            for (i, n) in ["Sort: name", "Sort: newest", "Sort: print time", "Sort: filament", "Sort: most printed"].iter().enumerate() { ui.selectable_value(&mut m.st.file_sort, i, *n); }
-        });
+        ui.add(egui::TextEdit::singleline(&mut m.st.file_q).hint_text("search files").desired_width(160.0));
+        pick(ui, "f_mat", "Material", &MATS, &mut m.st.file_mat);
+        pick(ui, "f_time", "Time", &["any", "under 1 h", "1 to 4 h", "over 4 h"], &mut m.st.file_time);
+        pick(ui, "f_seen", "History", &["any", "never printed", "printed before"], &mut m.st.file_seen);
+        pick(ui, "file_sort", "Sort", &["name", "newest", "print time", "filament", "most printed"], &mut m.st.file_sort);
         if icon_toggle(ui, "tiles", "Card view", !m.st.file_list) { m.st.file_list = false; }
         if icon_toggle(ui, "rows", "List view", m.st.file_list) { m.st.file_list = true; }
         if button(ui, "Upload") {
@@ -123,18 +123,6 @@ fn filter_bar(ui: &mut Ui, m: &mut Model, shown: usize, total: usize) {
             m.files.push(FileEntry { name, size_mb: 12.0, mins: 95, grams: 41.0, objects: 1, mat: "PLA", slicer: "OrcaSlicer 2.3", color: "Natural", added: "2026-10-30", printed: 0 });
             m.log(Sev::Info, "files", &format!("Uploaded {}", name));
         }
-    });
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(dim("Material"));
-        for (i, n) in MATS.iter().enumerate() { if choice_btn(ui, m.st.file_mat == i, n) { m.st.file_mat = i; } }
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.label(dim("Print time"));
-        for (i, n) in ["Any", "Under 1 h", "1 to 4 h", "Over 4 h"].iter().enumerate() { if choice_btn(ui, m.st.file_time == i, n) { m.st.file_time = i; } }
-        ui.add_space(10.0);
-        ui.label(dim("History"));
-        for (i, n) in ["Any", "Never printed", "Printed before"].iter().enumerate() { if choice_btn(ui, m.st.file_seen == i, n) { m.st.file_seen = i; } }
     });
     ui.horizontal_wrapped(|ui| {
         let used: f32 = m.files.iter().map(|f| f.size_mb).sum();
@@ -175,7 +163,7 @@ fn files(ui: &mut Ui, m: &mut Model) {
                         crate::icons::glyph(&ui.painter().clone(), "clock", r.center(), Color32::from_gray(170), 0.0);
                         ui.label(mono(dur(f.mins)).size(12.5).color(WHITE));
                     });
-                    ui.label(dim(format!("{:.0} g  -  {} obj  -  {}x printed", f.grams, f.objects, f.printed)).size(11.5));
+                    ui.label(dim(format!("{:.0} g  {} obj  {}x", f.grams, f.objects, f.printed)).size(11.5));
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
@@ -244,16 +232,10 @@ fn history(ui: &mut Ui, m: &mut Model) {
             ("Success rate", format!("{:.0} %", rate)),
         ], 120.0);
         ui.horizontal_wrapped(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut m.st.hist_q).hint_text("search history").desired_width(170.0));
-            ui.label(dim("Status"));
-            for (i, n) in ["All", "Completed", "Cancelled", "Failed"].iter().enumerate() { if choice_btn(ui, m.st.hist_filter == i, n) { m.st.hist_filter = i; } }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Material"));
-            for (i, n) in MATS.iter().enumerate() { if choice_btn(ui, m.st.hist_mat == i, n) { m.st.hist_mat = i; } }
-            ui.add_space(10.0);
-            ui.label(dim("Period"));
-            for (i, n) in ["All time", "Last 7 days", "Last 30 days"].iter().enumerate() { if choice_btn(ui, m.st.hist_period == i, n) { m.st.hist_period = i; } }
+            ui.add(egui::TextEdit::singleline(&mut m.st.hist_q).hint_text("search history").desired_width(160.0));
+            pick(ui, "h_status", "Status", &["all", "completed", "cancelled", "failed"], &mut m.st.hist_filter);
+            pick(ui, "h_mat", "Material", &MATS, &mut m.st.hist_mat);
+            pick(ui, "h_period", "Period", &["all time", "last 7 days", "last 30 days"], &mut m.st.hist_period);
         });
         ui.add_space(6.0);
         let q = m.st.hist_q.to_lowercase();

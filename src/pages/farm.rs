@@ -72,11 +72,12 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 ui.selectable_value(&mut m.st.grp_filter, 0, "All");
                 for (k, g) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.grp_filter, k + 1, *g); }
             });
-            ui.label(dim("Select"));
-            if crate::ui::sbtn(ui, "all").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i); } }
-            if crate::ui::sbtn(ui, "none").clicked() { m.fleet.iter_mut().for_each(|f| f.sel = false); }
-            if crate::ui::sbtn(ui, "printing").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Printing; } }
-            if crate::ui::sbtn(ui, "idle").clicked() { for i in 0..m.fleet.len() { m.fleet[i].sel = in_group(m, i) && m.fleet[i].state == MState::Idle; } }
+            if let Some(i) = menu_pick(ui, "Select", &["All", "None", "Printing", "Idle"]) {
+                for k in 0..m.fleet.len() {
+                    let st = m.fleet[k].state;
+                    m.fleet[k].sel = in_group(m, k) && match i { 0 => true, 1 => false, 2 => st == MState::Printing, _ => st == MState::Idle };
+                }
+            }
         });
         let sel: Vec<usize> = (0..m.fleet.len()).filter(|i| m.fleet[*i].sel).collect();
         ui.horizontal_wrapped(|ui| {
@@ -454,9 +455,7 @@ fn cameras(ui: &mut Ui, m: &mut Model) {
 
 fn alerts(ui: &mut Ui, m: &mut Model) {
     ui.horizontal_wrapped(|ui| {
-        for (k, n) in ["All", "Open", "Errors", "Warnings"].iter().enumerate() {
-            if ui.selectable_label(m.st.al_filter == k, *n).clicked() { m.st.al_filter = k; }
-        }
+        pick(ui, "al_filter", "Show", &["all", "open", "errors", "warnings"], &mut m.st.al_filter);
         if button(ui, "Acknowledge all") { m.alerts.iter_mut().for_each(|a| a.ack = true); }
         if button(ui, "Clear acknowledged") { m.alerts.retain(|a| !a.ack); }
     });

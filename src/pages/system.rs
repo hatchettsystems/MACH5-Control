@@ -317,10 +317,8 @@ pub fn simulator(ui: &mut Ui, m: &mut Model) {
 
 pub fn logs(ui: &mut Ui, m: &mut Model) {
     title(ui, "Event Log", "Safety, job, bus and API events");
-    ui.horizontal(|ui| {
-        for (k, n) in ["All", "Info", "Warn", "Error"].iter().enumerate() {
-            if ui.selectable_label(m.st.log_filter == k, *n).clicked() { m.st.log_filter = k; }
-        }
+    ui.horizontal_wrapped(|ui| {
+        pick(ui, "log_filter", "Level", &["all", "info", "warn", "error"], &mut m.st.log_filter);
         ui.add(egui::TextEdit::singleline(&mut m.st.log_q).hint_text("search").desired_width(220.0));
         button(ui, "Export");
     });

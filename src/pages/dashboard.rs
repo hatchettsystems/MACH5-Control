@@ -357,15 +357,18 @@ fn p_nodes(ui: &mut Ui, m: &mut Model, h: f32) {
 }
 
 fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
-    panel_min(ui, "Console", h, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for (i, n) in ["All", "Commands", "Warnings and errors"].iter().enumerate() {
-                if ui.selectable_label(m.st.con_filter == i, *n).clicked() { m.st.con_filter = i; }
-            }
-            if sbtn(ui, "Clear").clicked() { m.st.console.clear(); }
-            if sbtn(ui, "Copy").clicked() { ui.ctx().copy_text(m.st.console.join("\n")); }
-        });
-        ui.add_space(4.0);
+    let macros: [(&str, &str); 8] = [("Home all", "G28"), ("Bed mesh", "G29"), ("Level gantry", "G32"), ("Pause", "PAUSE"), ("Resume", "RESUME"), ("Shaper test", "SHAPER_CALIBRATE"), ("Help", "HELP"), ("Cool down", "")];
+    let labels: Vec<&str> = macros.iter().map(|x| x.0).collect();
+    let mut chosen = None;
+    let mut filter = m.st.con_filter;
+    let mut clear = false;
+    let mut copy = false;
+    panel_h(ui, "Console", |ui| {
+        chosen = menu_pick(ui, "Macros", &labels);
+        pick(ui, "con_filter", "Show", &["all", "commands", "warnings and errors"], &mut filter);
+        if ghost(ui, "Copy") { copy = true; }
+        if ghost(ui, "Clear") { clear = true; }
+    }, |ui| {
         Frame::new().fill(INSET).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height((h - 190.0).max(260.0));
@@ -397,15 +400,19 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
                 r.request_focus();
             }
         });
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Macros"));
-            for (lbl, c) in [("Home all", "G28"), ("Mesh", "G29"), ("Level", "G32"), ("Pause", "PAUSE"), ("Resume", "RESUME"), ("Shaper test", "SHAPER_CALIBRATE"), ("Help", "HELP")] {
-                if chip_btn(ui, lbl) { run_cmd(m, c); }
-            }
-            if chip_btn(ui, "Cool down") { for h in m.heaters.iter_mut() { h.target = 0.0; } m.st.console.push("> cool down (all heaters off)".into()); m.st.console.push("ok".into()); }
-        });
     });
+    m.st.con_filter = filter;
+    if clear { m.st.console.clear(); }
+    if copy { ui.ctx().copy_text(m.st.console.join("\n")); }
+    if let Some(i) = chosen {
+        if macros[i].1.is_empty() {
+            for h in m.heaters.iter_mut() { h.target = 0.0; }
+            m.st.console.push("> cool down (all heaters off)".into());
+            m.st.console.push("ok".into());
+        } else {
+            run_cmd(m, macros[i].1);
+        }
+    }
 }
 
 fn p_history(ui: &mut Ui, m: &mut Model, _h: f32) {
@@ -510,7 +517,9 @@ fn heater_row(ui: &mut Ui, m: &mut Model, k: usize, glyph: &str, col: Color32) {
 }
 
 fn p_temps(ui: &mut Ui, m: &mut Model) {
-    panel(ui, "Temperatures", |ui| {
+    let names: Vec<&str> = m.profiles.iter().map(|p| p.name).chain(std::iter::once("All off")).collect();
+    let mut chosen = None;
+    panel_h(ui, "Temperatures", |ui| { chosen = menu_pick(ui, "Preset", &names); }, |ui| {
         let hi = m.h_hot.iter().chain(m.h_t_hot.iter()).cloned().fold(100.0_f32, f32::max);
         let top = ((hi * 1.1) / 50.0).ceil() * 50.0;
         plot(ui, 190.0, &[
@@ -523,14 +532,16 @@ fn p_temps(ui: &mut Ui, m: &mut Model) {
         heater_row(ui, m, 0, "thermo", SENS_HOT);
         heater_row(ui, m, 1, "bed", SENS_BED);
         heater_row(ui, m, 2, "cube", SENS_CHAM);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Preset"));
-            for p in m.profiles.iter() {
-                if chip_btn(ui, p.name) { m.heaters[0].target = p.nozzle; m.heaters[1].target = p.bed; m.heaters[2].target = p.chamber; }
-            }
-            if chip_btn(ui, "All off") { for h in m.heaters.iter_mut() { h.target = 0.0; } }
-        });
     });
+    if let Some(i) = chosen {
+        if i < m.profiles.len() {
+            let p = &m.profiles[i];
+            let (n, b, c) = (p.nozzle, p.bed, p.chamber);
+            m.heaters[0].target = n; m.heaters[1].target = b; m.heaters[2].target = c;
+        } else {
+            for h in m.heaters.iter_mut() { h.target = 0.0; }
+        }
+    }
 }
 
 fn p_move(ui: &mut Ui, m: &mut Model) {
