@@ -16,7 +16,6 @@ fn stat(ui: &mut Ui, big: String, cap: &str, st: Option<Status>) {
         ui.label(mono(big).size(20.0).color(col));
         ui.label(dim(cap));
     });
-    ui.add_space(22.0);
 }
 
 fn in_group(m: &Model, i: usize) -> bool {
@@ -45,7 +44,8 @@ fn summary(ui: &mut Ui, m: &mut Model) {
     let util = m.fleet.iter().map(|f| f.util[6]).sum::<f32>() / m.fleet.len().max(1) as f32;
     let queued = m.queue.iter().map(|q| q.left).sum::<u32>();
     panel(ui, "", |ui| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 24.0;
             stat(ui, format!("{}/{}", c(MState::Printing), m.fleet.len()), "printing", None);
             stat(ui, c(MState::Idle).to_string(), "idle", None);
             stat(ui, c(MState::Paused).to_string(), "paused", if c(MState::Paused) > 0 { Some(Status::Warn) } else { None });
@@ -68,7 +68,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 m.st.add_ip = format!("10.0.4.{}", 40 + m.fleet.len());
             }
             ui.label(dim("Group"));
-            egui::ComboBox::from_id_salt("grp_filter").width(110.0).selected_text(if m.st.grp_filter == 0 { "All" } else { GROUPS[m.st.grp_filter - 1] }).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("grp_filter").width(90.0).selected_text(if m.st.grp_filter == 0 { "All" } else { GROUPS[m.st.grp_filter - 1] }).show_ui(ui, |ui| {
                 ui.selectable_value(&mut m.st.grp_filter, 0, "All");
                 for (k, g) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.grp_filter, k + 1, *g); }
             });
@@ -88,7 +88,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 if button(ui, "Cancel job") { for i in &sel { m.m_cancel(*i); } m.log(Sev::Warn, "farm", &format!("Cancel sent to {} machine(s)", sel.len())); }
                 if button(ui, "Cool down") { for i in &sel { m.m_cool(*i); } }
                 if button(ui, "Clear faults") { for i in &sel { m.m_clear(*i); } }
-                egui::ComboBox::from_id_salt("send_file").width(170.0).selected_text(JOBS[m.st.send_file].0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("send_file").width(100.0).selected_text(JOBS[m.st.send_file].0.trim_end_matches(".gcode").chars().take(13).collect::<String>()).show_ui(ui, |ui| {
                     for (k, j) in JOBS.iter().enumerate() { ui.selectable_value(&mut m.st.send_file, k, j.0); }
                 });
                 if primary(ui, "Send job to idle") {
@@ -96,7 +96,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                     for i in &sel { if m.fleet[*i].state == MState::Idle { m.m_start(*i, m.st.send_file); n += 1; } }
                     m.log(Sev::Info, "farm", &format!("Job {} started on {} idle machine(s)", JOBS[m.st.send_file].0, n));
                 }
-                egui::ComboBox::from_id_salt("set_group").width(100.0).selected_text(GROUPS[m.st.set_group]).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("set_group").width(70.0).selected_text(GROUPS[m.st.set_group]).show_ui(ui, |ui| {
                     for (k, g) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.set_group, k, *g); }
                 });
                 if button(ui, "Set group") { for i in &sel { m.fleet[*i].group = m.st.set_group; } }
@@ -409,41 +409,19 @@ fn queue(ui: &mut Ui, m: &mut Model) {
 }
 
 /// Animated placeholder camera view driven by the machine's live state.
-pub fn cam_tile(ui: &mut Ui, f: &FleetMachine, t: f32, w: f32, seed: f32, current: bool) -> egui::Response {
+/// Camera tile. There is no real video in this prototype, so every tile shows a plain
+/// "no feed" screen with the machine name and state.
+pub fn cam_tile(ui: &mut Ui, f: &FleetMachine, _t: f32, w: f32, _seed: f32, current: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(w, w * 0.62), Sense::click());
     let p = ui.painter_at(r);
-    p.rect_filled(r, RAD, Color32::from_gray(7));
-    for k in 0..(r.height() / 5.0) as i32 {
-        p.line_segment([egui::pos2(r.left(), r.top() + k as f32 * 5.0), egui::pos2(r.right(), r.top() + k as f32 * 5.0)], Stroke::new(1.0_f32, Color32::from_white_alpha(4)));
-    }
-    let floor = r.bottom() - r.height() * 0.1;
-    p.rect_filled(egui::Rect::from_min_max(egui::pos2(r.left() + r.width() * 0.1, floor), egui::pos2(r.right() - r.width() * 0.1, floor + 5.0)), 1.0, Color32::from_gray(60));
-    let live = matches!(f.state, MState::Printing | MState::Paused | MState::Fault);
-    let stack = if live { f.prog.max(0.03) * r.height() * 0.55 } else { 0.0 };
-    if live {
-        for (k, cx) in [0.28_f32, 0.5, 0.72].iter().enumerate() {
-            let bw = r.width() * (0.12 + 0.03 * k as f32);
-            let blk = egui::Rect::from_min_max(egui::pos2(r.left() + r.width() * cx - bw / 2.0, floor - stack), egui::pos2(r.left() + r.width() * cx + bw / 2.0, floor));
-            p.rect_filled(blk, 0.0, Color32::from_gray(78));
-            let mut y = blk.bottom();
-            while y > blk.top() { p.line_segment([egui::pos2(blk.left(), y), egui::pos2(blk.right(), y)], Stroke::new(1.0_f32, Color32::from_gray(50))); y -= 3.0; }
-        }
-        let nx = r.left() + r.width() * (0.2 + 0.6 * (0.5 + 0.5 * (t * 2.4 + seed).sin()));
-        let ny = floor - stack - 6.0;
-        p.line_segment([egui::pos2(r.left() + 6.0, ny - 4.0), egui::pos2(r.right() - 6.0, ny - 4.0)], Stroke::new(1.0_f32, Color32::from_gray(70)));
-        p.rect_filled(egui::Rect::from_center_size(egui::pos2(nx, ny), vec2(10.0, 8.0)), 1.0, Color32::from_gray(if f.state == MState::Printing { 230 } else { 120 }));
-    }
-    let (msg, col) = match f.state {
-        MState::Idle => ("READY", FAINT),
-        MState::Paused => ("PAUSED", WARN),
-        MState::Fault => ("FAULT", ERR),
-        MState::Calibrating => ("CALIBRATING", DIM),
-        MState::Printing => ("", DIM),
-    };
-    if !msg.is_empty() { p.text(r.center() - vec2(0.0, r.height() * 0.15), Align2::CENTER_CENTER, msg, FontId::monospace(13.0), col); }
-    p.text(r.left_top() + vec2(7.0, 5.0), Align2::LEFT_TOP, &f.name, FontId::monospace(10.5), WHITE);
-    p.text(r.left_bottom() + vec2(7.0, -5.0), Align2::LEFT_BOTTOM, format!("{:.0}%  {:.0}C  {}", f.prog * 100.0, f.temps[0], if f.state == MState::Printing { fmt_dur(eta(f)) } else { String::new() }), FontId::monospace(10.0), DIM);
-    p.rect_filled(egui::Rect::from_center_size(r.right_top() + vec2(-10.0, 10.0), vec2(7.0, 7.0)), 0.0, f.state.status().color());
+    p.rect_filled(r, RAD, Color32::from_rgb(6, 7, 9));
+    let c = r.center() - vec2(0.0, r.height() * 0.06);
+    // crossed-out camera
+    crate::icons::glyph(&p, "camera", c, Color32::from_gray(80), 0.0);
+    p.line_segment([c + vec2(-13.0, 11.0), c + vec2(13.0, -11.0)], Stroke::new(1.6_f32, Color32::from_gray(80)));
+    p.text(c + vec2(0.0, 26.0), Align2::CENTER_CENTER, "NO FEED", FontId::monospace((r.width() * 0.045).clamp(10.0, 14.0)), Color32::from_gray(110));
+    p.text(r.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, &f.name, FontId::monospace(10.5), Color32::from_gray(190));
+    p.rect_filled(egui::Rect::from_center_size(r.right_top() + vec2(-11.0, 11.0), vec2(7.0, 7.0)), 0.0, f.state.status().color());
     p.rect_stroke(r, RAD, Stroke::new(1.0_f32, if current { WHITE } else if resp.hovered() { LINE2 } else { LINE }), StrokeKind::Inside);
     resp
 }
@@ -475,7 +453,7 @@ fn cameras(ui: &mut Ui, m: &mut Model) {
 }
 
 fn alerts(ui: &mut Ui, m: &mut Model) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (k, n) in ["All", "Open", "Errors", "Warnings"].iter().enumerate() {
             if ui.selectable_label(m.st.al_filter == k, *n).clicked() { m.st.al_filter = k; }
         }

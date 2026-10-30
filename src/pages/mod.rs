@@ -24,13 +24,13 @@ pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
         leaf(ui, page, m);
         return;
     }
-    ui.label(egui::RichText::new(page.nav_title()).size(20.0).strong().color(WHITE));
+    ui.label(disp(page.nav_title(), 24.0).color(WHITE));
     ui.label(dim(page.hub_blurb()));
     ui.add_space(4.0);
     for (i, (sub, name)) in secs.iter().enumerate() {
         ui.add_space(if i == 0 { 4.0 } else { 14.0 });
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(*name).size(16.0).strong().color(WHITE));
+            ui.label(disp(*name, 18.0).color(WHITE));
         });
         let y = ui.cursor().top() + 1.0;
         ui.painter().line_segment([egui::pos2(ui.min_rect().left(), y), egui::pos2(ui.max_rect().right(), y)], egui::Stroke::new(1.0_f32, LINE2));

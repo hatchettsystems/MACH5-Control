@@ -97,14 +97,10 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
                     let (r, _) = ui.allocate_exact_size(vec2(w, w * 0.5625), Sense::hover());
                     let p = ui.painter_at(r);
                     p.rect_filled(r, crate::theme::RAD, Color32::from_gray(6));
-                    for k in 1..4 {
-                        let x = r.left() + r.width() * k as f32 / 4.0;
-                        let y = r.top() + r.height() * k as f32 / 4.0;
-                        p.line_segment([egui::pos2(x, r.top()), egui::pos2(x, r.bottom())], Stroke::new(1.0_f32, Color32::from_gray(20)));
-                        p.line_segment([egui::pos2(r.left(), y), egui::pos2(r.right(), y)], Stroke::new(1.0_f32, Color32::from_gray(20)));
-                    }
-                    p.text(r.center(), Align2::CENTER_CENTER, "NO VIDEO - PLACEHOLDER", FontId::monospace(13.0), FAINT);
-                    p.text(r.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, format!("CAM1  1280x720  15 fps  {}", fmt_dur(m.t as f32)), FontId::monospace(10.0), DIM);
+                    let c0 = r.center() - vec2(0.0, 8.0);
+                    crate::icons::glyph(&p, "camera", c0, Color32::from_gray(80), 0.0);
+                    p.line_segment([c0 + vec2(-13.0, 11.0), c0 + vec2(13.0, -11.0)], Stroke::new(1.6_f32, Color32::from_gray(80)));
+                    p.text(c0 + vec2(0.0, 28.0), Align2::CENTER_CENTER, "NO FEED", FontId::monospace(13.0), Color32::from_gray(110));
                     p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
                 });
                 panel(c.at(1), "Camera node", |ui| {

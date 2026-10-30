@@ -135,7 +135,7 @@ fn p_status(ui: &mut Ui, m: &mut Model, h: f32) {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                 ui.painter().circle_filled(r.center(), 8.0, m.state.status().color());
-                ui.label(RichText::new(m.state.label().split(' ').next().unwrap_or("")).size(30.0).strong().color(WHITE));
+                ui.label(disp(m.state.label().split(' ').next().unwrap_or(""), 38.0).color(WHITE));
             });
             ui.label(dim(if busy { m.job.file.clone() } else { "Ready for a new print".into() }));
             if m.state == MState::Fault { ui.label(RichText::new("Fault latched - clear to continue").color(ERR).size(12.0)); }

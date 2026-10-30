@@ -232,7 +232,7 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
         _ => {
             adaptive(ui, 2, |c| {
                 panel(c.at(0), "On-machine screen (DSI) - mirrored through the API", |ui| {
-                    let w = ui.available_width().min(560.0);
+                    let w = (ui.available_width() - 4.0).min(560.0);
                     let (r, _) = ui.allocate_exact_size(vec2(w, w * 0.6), Sense::hover());
                     let p = ui.painter_at(r);
                     p.rect_filled(r, crate::theme::RAD, Color32::BLACK);
@@ -281,7 +281,7 @@ pub fn simulator(ui: &mut Ui, m: &mut Model) {
         });
         panel(c.at(1), "Fault injection", |ui| {
             for (k, (n, e)) in [("Heater loss", "node cuts heater; Host reports fault"), ("CAN drop (segment A)", "controlled stop on missing time sync"), ("Power loss", "checkpoint written; resume available"), ("Drive over-current", "drive disables; fault latched")].iter().enumerate() {
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     ui.checkbox(&mut m.sim.faults[k], *n);
                     ui.label(dim(*e));
                 });

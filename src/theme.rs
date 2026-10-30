@@ -58,7 +58,35 @@ impl Status {
     }
 }
 
+/// The all-caps display face used for card titles, hero status and big values.
+pub fn display_family() -> egui::FontFamily {
+    egui::FontFamily::Name("Display".into())
+}
+
+fn install_fonts(ctx: &egui::Context) {
+    use egui::{FontData, FontDefinitions, FontFamily};
+    let mut fd = FontDefinitions::default();
+    let fonts: [(&str, &'static [u8]); 4] = [
+        ("plex", include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")),
+        ("plex-medium", include_bytes!("../assets/fonts/IBMPlexMono-Medium.ttf")),
+        ("plex-semibold", include_bytes!("../assets/fonts/IBMPlexMono-SemiBold.ttf")),
+        ("badd", include_bytes!("../assets/fonts/BaddMono-Regular.otf")),
+    ];
+    for (name, bytes) in fonts {
+        fd.font_data.insert(name.to_owned(), std::sync::Arc::new(FontData::from_static(bytes)));
+    }
+    // Body: IBM Plex Mono first, the built-in fonts remain as fallback for any missing glyph.
+    for fam in [FontFamily::Proportional, FontFamily::Monospace] {
+        let list = fd.families.entry(fam).or_default();
+        list.insert(0, "plex".to_owned());
+    }
+    fd.families.insert(display_family(), vec!["badd".to_owned(), "plex-semibold".to_owned(), "plex".to_owned()]);
+    fd.families.insert(FontFamily::Name("Strong".into()), vec!["plex-semibold".to_owned(), "plex".to_owned()]);
+    ctx.set_fonts(fd);
+}
+
 pub fn apply(ctx: &egui::Context) {
+    install_fonts(ctx);
     let mut v = egui::Visuals::dark();
     let r = CornerRadius::same(RAD as u8);
     v.panel_fill = BG;
@@ -112,10 +140,10 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.scroll.bar_width = 6.0;
         s.visuals.striped = true;
         use egui::{FontFamily as F, FontId, TextStyle as T};
-        s.text_styles.insert(T::Body, FontId::new(13.0, F::Proportional));
-        s.text_styles.insert(T::Button, FontId::new(13.0, F::Proportional));
-        s.text_styles.insert(T::Small, FontId::new(11.0, F::Proportional));
-        s.text_styles.insert(T::Monospace, FontId::new(12.5, F::Monospace));
+        s.text_styles.insert(T::Body, FontId::new(12.5, F::Proportional));
+        s.text_styles.insert(T::Button, FontId::new(12.5, F::Proportional));
+        s.text_styles.insert(T::Small, FontId::new(10.5, F::Proportional));
+        s.text_styles.insert(T::Monospace, FontId::new(12.0, F::Monospace));
         s.text_styles.insert(T::Heading, FontId::new(20.0, F::Proportional));
     });
 }

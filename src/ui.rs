@@ -100,6 +100,11 @@ pub fn frost_shape(ctx: &egui::Context, rect: Rect) -> Option<Shape> {
     Some(Shape::mesh(mesh))
 }
 
+/// All-caps display text (Badd Mono) for titles, hero status and big values.
+pub fn disp(s: impl Into<String>, size: f32) -> RichText {
+    RichText::new(s.into()).font(FontId::new(size, crate::theme::display_family()))
+}
+
 pub fn mono(s: impl Into<String>) -> RichText {
     RichText::new(s.into()).monospace()
 }
@@ -115,7 +120,7 @@ pub fn title(ui: &mut Ui, t: &str, sub: &str) {
         ui.add_space(6.0);
         return;
     }
-    ui.label(RichText::new(t).size(20.0).strong().color(WHITE));
+    ui.label(disp(t, 24.0).color(WHITE));
     ui.label(dim(sub));
     ui.add_space(6.0);
     ui.separator();
@@ -157,7 +162,7 @@ pub fn panel_min(ui: &mut Ui, head: &str, min_h: f32, f: impl FnOnce(&mut Ui)) {
                     let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
                     crate::icons::glyph(&ui.painter().clone(), g, r.center(), Color32::from_gray(205), 0.0);
                 }
-                ui.label(RichText::new(head).size(14.0).strong().color(WHITE));
+                ui.add(egui::Label::new(disp(head, 16.0).color(WHITE)).truncate());
             });
             if let Some(id) = drag_id {
                 let hr = hdr.response.rect;
@@ -302,7 +307,7 @@ pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
         for (i, n) in names.iter().enumerate() {
             let sel = *cur == i;
             let col = if sel { WHITE } else { DIM };
-            let resp = ui.add(Button::new(RichText::new(*n).color(col).size(13.5)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).min_size(vec2(0.0, 30.0)));
+            let resp = ui.add(Button::new(disp(*n, 14.5).color(col)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).min_size(vec2(0.0, 30.0)));
             if sel {
                 let y = resp.rect.bottom();
                 ui.painter().line_segment([egui::pos2(resp.rect.left() + 8.0, y), egui::pos2(resp.rect.right() - 8.0, y)], Stroke::new(2.0_f32, ACCENT));
@@ -506,7 +511,7 @@ pub fn stat_tile(ui: &mut Ui, w: f32, glyph: &str, value: &str, caption: &str) {
                 ui.spacing_mut().item_spacing.y = 3.0;
                 let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
                 crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), Color32::from_gray(190), 0.0);
-                ui.label(mono(value).size(19.0).color(WHITE));
+                ui.label(disp(value, 24.0).color(WHITE));
                 ui.label(dim(caption));
             });
         });
@@ -778,9 +783,11 @@ pub fn ramp_legend(ui: &mut Ui, w: f32, range: (f32, f32)) {
         ui.painter().rect_filled(seg, 0.0, ramp(i as f32 / (n - 1) as f32));
     }
     ui.horizontal(|ui| {
+        ui.set_max_width(w);
         ui.label(dim(format!("{:+.3} mm", range.0)));
-        ui.add_space((w - 130.0).max(0.0));
-        ui.label(dim(format!("{:+.3} mm", range.1)));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(dim(format!("{:+.3} mm", range.1)));
+        });
     });
 }
 

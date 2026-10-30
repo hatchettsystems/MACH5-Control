@@ -79,7 +79,7 @@ pub fn motion(ui: &mut Ui, m: &mut Model) {
                 });
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if button(ui, "Run resonance test") { m.st.tab = 3; m.goto = Some(Page::Calibration); }
                 ui.label(dim("Results are saved per axis and applied automatically."));
             });

@@ -133,7 +133,7 @@ impl App {
                 }
                 ui.horizontal_centered(|ui| {
                     let narrow = ctx.screen_rect().width() < 1150.0;
-                    ui.label(RichText::new("MACH5").monospace().strong().size(15.0).color(WHITE));
+                    ui.label(ui::disp("MACH5", 17.0).color(WHITE));
                     ui.label(ui::dim("/"));
                     ui.label(RichText::new(self.page.nav_title()).color(TEXT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -175,7 +175,7 @@ impl App {
         } else {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
-                ui.label(RichText::new("MACH5").monospace().strong().size(17.0).color(WHITE));
+                ui.label(ui::disp("MACH5", 20.0).color(WHITE));
                 ui.label(ui::dim("control"));
             });
         }
