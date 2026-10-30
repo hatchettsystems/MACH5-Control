@@ -12,6 +12,7 @@ mod materials;
 mod print;
 
 pub fn print_file_color(n: &str) -> &'static str { print::file_color(n) }
+pub fn example_files() -> Vec<crate::data::FileEntry> { print::example_files() }
 mod spools;
 mod system;
 mod tuning;

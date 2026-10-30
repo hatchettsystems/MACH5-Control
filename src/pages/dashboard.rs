@@ -2,7 +2,6 @@
 use super::control::{run_cmd, state_actions, SHAPERS};
 use super::farm::cam_tile;
 use crate::data::*;
-use crate::fleetsim::eta;
 use crate::theme::*;
 use crate::ui::*;
 use eframe::egui::{self, vec2, Align, Align2, Color32, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui};
@@ -35,7 +34,7 @@ const CARD_INFO: [(&str, Span); DASH_CARDS] = [
     ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Movement", Span::Half),
     ("Print parameters", Span::Half), ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half),
     ("Motion system", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half), ("Console", Span::Full),
-    ("Print history", Span::Half), ("Recent events", Span::Half), ("Objects and recovery", Span::Half),
+    ("Print history", Span::Full), ("Recent events", Span::Half), ("Objects and recovery", Span::Half),
 ];
 
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
@@ -399,38 +398,30 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
     });
 }
 
-fn p_history(ui: &mut Ui, m: &mut Model, h: f32) {
-    let (now, cur) = (14.0 * 3600.0 + 32.0 * 60.0 + m.t as f32, m.fleet[m.active].clone());
-    panel_min(ui, "Print history", h, |ui| {
-        let w = ui.available_width();
-        let mut rows: Vec<(String, Status, String, String)> = Vec::new();
-        if matches!(m.state, MState::Printing | MState::Paused) {
-            rows.push((m.job.file.trim_end_matches(".gcode").to_string(), Status::Ok, fmt_dur(m.job.elapsed), format!("ETA {}", clock(now + eta(&cur)))));
-        }
-        for (f, st, tm, d) in [
-            ("pa_calib_tower", Status::Ok, "00:18:04", "today 11:02"),
-            ("benchy_calib", Status::Ok, "01:02:40", "today 09:41"),
-            ("enclosure_panel", Status::Ok, "05:17:12", "yesterday"),
-            ("gear_train_x6", Status::Warn, "01:40:55", "yesterday"),
-            ("mmu_test_4color", Status::Err, "00:52:09", "2 days ago"),
-            ("housing_set_v6", Status::Ok, "07:31:20", "3 days ago"),
-        ] {
-            rows.push((f.to_string(), st, tm.to_string(), d.to_string()));
-        }
-        for (f, st, tm, d) in rows {
-            Frame::new().fill(CARD).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(7).inner_margin(Margin::symmetric(10, 7)).show(ui, |ui| {
-                ui.set_width(w - 22.0);
-                ui.horizontal(|ui| {
-                    dot(ui, st);
-                    ui.label(RichText::new(f).size(12.5));
+fn p_history(ui: &mut Ui, m: &mut Model, _h: f32) {
+    panel(ui, "Print history", |ui| {
+        let list = super::print::recent(m, 4);
+        if list.is_empty() { ui.label(dim("No prints yet.")); }
+        card_grid(ui, list.len(), 230.0, |ui, n, w| {
+            let h = &list[n];
+            let col = filament_rgb(h.color);
+            card_frame(ui, w, false, |ui| {
+                ui.horizontal_top(|ui| {
+                    thumb(ui, 76.0, &h.file, col);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.add(egui::Label::new(RichText::new(h.file.trim_end_matches(".gcode")).strong().size(13.0).color(WHITE)).truncate());
+                        match h.status { 0 => status(ui, Status::Ok, "Completed"), 1 => status(ui, Status::Warn, "Cancelled"), _ => status(ui, Status::Err, "Failed") }
+                        ui.horizontal(|ui| {
+                            color_chip(ui, h.mat, col);
+                            ui.label(mono(format!("{}h {:02}m", (h.secs / 3600.0) as u32, ((h.secs / 60.0) as u32) % 60)).size(12.0).color(WHITE));
+                        });
+                    });
                 });
-                ui.horizontal(|ui| {
-                    ui.label(mono(tm).size(11.5).color(DIM));
-                    ui.label(dim(d));
-                });
+                ui.label(dim(format!("{:.0} g  -  {}", h.grams, h.ended)).size(11.5));
             });
-            ui.add_space(4.0);
-        }
+        });
+        if button(ui, "Open print history") { m.goto = Some(Page::Print); }
     });
 }
 

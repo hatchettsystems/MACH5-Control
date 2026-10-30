@@ -173,7 +173,7 @@ pub struct Drive {
 }
 
 #[derive(Clone)]
-pub struct FileEntry { pub name: &'static str, pub size_mb: f32, pub mins: u32, pub grams: f32, pub objects: u32, pub mat: &'static str, pub slicer: &'static str }
+pub struct FileEntry { pub name: &'static str, pub size_mb: f32, pub mins: u32, pub grams: f32, pub objects: u32, pub mat: &'static str, pub slicer: &'static str, pub color: &'static str, pub added: &'static str, pub printed: u32 }
 
 pub struct Profile { pub name: &'static str, pub nozzle: f32, pub bed: f32, pub chamber: f32, pub pa: f32, pub flow: f32, pub fan: f32 }
 
@@ -273,6 +273,13 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub file_list: bool,
+    pub file_mat: usize,
+    pub file_time: usize,
+    pub file_seen: usize,
+    pub hist_mat: usize,
+    pub hist_period: usize,
+    pub hist_q: String,
     pub file_q: String,
     pub file_sort: usize,
     pub hist_filter: usize,
@@ -494,14 +501,7 @@ impl Model {
                 drv("E", "Drive E", "Moons 36 pancake", 1.2, 9.0, 47.0, 1.0, 0.31),
             ],
             nodes,
-            files: vec![
-                FileEntry { name: "housing_set_v7.gcode", size_mb: 48.2, mins: 460, grams: 312.0, objects: 5, mat: "PA-CF", slicer: "OrcaSlicer 2.3" },
-                FileEntry { name: "benchy_calib.gcode", size_mb: 6.1, mins: 62, grams: 14.0, objects: 1, mat: "PETG", slicer: "PrusaSlicer 2.9" },
-                FileEntry { name: "enclosure_panel_left.gcode", size_mb: 31.7, mins: 318, grams: 186.0, objects: 1, mat: "ASA", slicer: "OrcaSlicer 2.3" },
-                FileEntry { name: "gear_train_x6.gcode", size_mb: 22.4, mins: 205, grams: 98.0, objects: 6, mat: "PLA", slicer: "OrcaSlicer 2.3" },
-                FileEntry { name: "pa_calib_tower.gcode", size_mb: 0.4, mins: 18, grams: 6.0, objects: 1, mat: "PETG", slicer: "MACH5 app" },
-                FileEntry { name: "mmu_test_4color.gcode", size_mb: 18.0, mins: 144, grams: 71.0, objects: 4, mat: "PLA x4", slicer: "OrcaSlicer 2.3" },
-            ],
+            files: crate::pages::example_files(),
             profiles: vec![
                 Profile { name: "PLA", nozzle: 215.0, bed: 60.0, chamber: 0.0, pa: 0.036, flow: 0.98, fan: 100.0 },
                 Profile { name: "PETG", nozzle: 240.0, bed: 80.0, chamber: 0.0, pa: 0.052, flow: 0.96, fan: 50.0 },
@@ -851,12 +851,15 @@ fn config_sections() -> Vec<Section> {
 pub const DASH_CARDS: usize = 15;
 
 pub fn default_dash_order() -> Vec<u8> {
-    (0..DASH_CARDS as u8).collect()
+    // card 12 (recent prints) leads, the rest keep their natural order
+    let mut v: Vec<u8> = vec![12];
+    v.extend((0..DASH_CARDS as u8).filter(|i| *i != 12));
+    v
 }
 
 fn dash_path() -> std::path::PathBuf {
     let base = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    base.join(".mach5-dashboard")
+    base.join(".mach5-dashboard-v2")
 }
 
 /// The saved dashboard card order, or the default if missing or invalid.
