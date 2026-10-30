@@ -117,7 +117,15 @@ pub fn title(ui: &mut Ui, t: &str, sub: &str) {
 
 /// Flat bordered section with a small caps header.
 pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
+    panel_min(ui, head, 0.0, f)
+}
+
+/// A card with a minimum height, so cards in one row line up.
+pub fn panel_min(ui: &mut Ui, head: &str, min_h: f32, f: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
+    let expect_right = ui.cursor().left() + w;
+    // A page can mark the next card as draggable (id) so its header becomes a handle.
+    let drag_id: Option<u8> = ui.ctx().data_mut(|d| d.remove_temp::<u8>(egui::Id::new("cur_card")));
     let frame = Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, LINE)).corner_radius(RAD as u8).inner_margin(Margin::same(10));
     let mut prep = frame.begin(ui);
     // Reserved after the frame's own fill slot, so the frosted glow sits on the glass, under the content.
@@ -125,26 +133,66 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
     {
         let cu = &mut prep.content_ui;
         cu.set_width((w - 22.0).max(10.0));
+        cu.set_min_height((min_h - 22.0).max(0.0));
         if !head.is_empty() {
-            cu.horizontal(|ui| {
+            let hdr = cu.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
+                if drag_id.is_some() {
+                    // grip: two columns of three dots
+                    let (r, _) = ui.allocate_exact_size(vec2(10.0, 20.0), Sense::hover());
+                    for dx in [-2.5_f32, 2.5] {
+                        for dy in [-5.0_f32, 0.0, 5.0] {
+                            ui.painter().circle_filled(r.center() + vec2(dx, dy), 1.3, Color32::from_gray(120));
+                        }
+                    }
+                }
                 if let Some(g) = crate::icons::head_glyph(head) {
                     let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
                     crate::icons::glyph(&ui.painter().clone(), g, r.center(), Color32::from_gray(205), 0.0);
                 }
                 ui.label(RichText::new(head).size(14.0).strong().color(WHITE));
             });
+            if let Some(id) = drag_id {
+                let hr = hdr.response.rect;
+                let full = Rect::from_min_max(hr.min, egui::pos2(cu.max_rect().right(), hr.max.y));
+                let resp = cu.interact(full, egui::Id::new(("card_hdr", id)), Sense::click_and_drag());
+                let ctx = cu.ctx().clone();
+                if resp.dragged() {
+                    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dash_drag"), id));
+                } else if resp.hovered() {
+                    ctx.set_cursor_icon(egui::CursorIcon::Grab);
+                }
+                if resp.drag_stopped() {
+                    let p = ctx.input(|i| i.pointer.interact_pos()).unwrap_or(egui::Pos2::ZERO);
+                    ctx.data_mut(|d| {
+                        d.remove_temp::<u8>(egui::Id::new("dash_drag"));
+                        d.insert_temp(egui::Id::new("drag_drop"), (id, p));
+                    });
+                }
+            }
             let y = cu.cursor().top() + 2.0;
             let (l, r) = (cu.max_rect().left(), cu.max_rect().right());
             cu.painter().line_segment([egui::pos2(l, y), egui::pos2(r, y)], Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)));
             cu.add_space(9.0);
         }
-        f(cu);
+        // Columns lay children out "justified"; force a plain top-down layout so buttons keep their natural width.
+        cu.with_layout(egui::Layout::top_down(egui::Align::Min), |cu| f(cu));
     }
     let resp = prep.end(ui);
     let r = resp.rect;
+    if std::env::var("MACH5_DEBUG").is_ok() && r.right() > expect_right + 2.0 {
+        eprintln!("CARD-OVERFLOW '{}' wider by {:.0}px", head, r.right() - expect_right);
+    }
     if let Some(s) = frost_shape(ui.ctx(), r) {
         ui.painter().set(slot, s);
+    }
+    if let Some(id) = drag_id {
+        ui.ctx().data_mut(|d| {
+            let mut v: Vec<(u8, Rect)> = d.get_temp(egui::Id::new("card_rects")).unwrap_or_default();
+            v.push((id, r));
+            d.insert_temp(egui::Id::new("card_rects"), v);
+        });
     }
     set_anchor(ui.ctx(), head, r);
     let focus: String = ui.ctx().data(|d| d.get_temp(egui::Id::new("tour_focus"))).unwrap_or_default();
@@ -154,13 +202,43 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
 }
 
-/// Compact button for tables and rows: still sized to its text, never clipped.
+/// Responsive columns: side by side when each column can be at least `min_w` wide,
+/// otherwise stacked, so nothing is clipped on narrow windows.
+pub struct Cols<'a> {
+    solo: Option<&'a mut Ui>,
+    many: Option<&'a mut [Ui]>,
+}
+impl<'a> Cols<'a> {
+    pub fn at(&mut self, i: usize) -> &mut Ui {
+        if let Some(u) = self.solo.as_deref_mut() {
+            u
+        } else {
+            &mut self.many.as_deref_mut().unwrap()[i]
+        }
+    }
+}
+pub fn adaptive_w(ui: &mut Ui, n: usize, min_w: f32, f: impl FnOnce(&mut Cols)) {
+    let w = ui.available_width();
+    if w >= n as f32 * min_w + (n as f32 - 1.0) * 8.0 {
+        ui.columns(n, |cols| {
+            let mut c = Cols { solo: None, many: Some(cols) };
+            f(&mut c)
+        });
+    } else {
+        let mut c = Cols { solo: Some(ui), many: None };
+        f(&mut c);
+    }
+}
+pub fn adaptive(ui: &mut Ui, n: usize, f: impl FnOnce(&mut Cols)) {
+    adaptive_w(ui, n, 420.0, f)
+}
+
+/// Compact button for rows and cards: still sized to its text, never clipped.
 pub fn sbtn(ui: &mut Ui, t: &str) -> egui::Response {
-    ui.scope(|ui| {
+    with_button_style(ui, false, |ui| {
         ui.spacing_mut().button_padding = vec2(11.0, 3.0);
-        ui.add(Button::new(RichText::new(t).size(12.0)).min_size(vec2(0.0, 24.0)))
+        ui.add(Button::new(RichText::new(t).size(12.5).color(WHITE)).min_size(vec2(0.0, 26.0)))
     })
-    .inner
 }
 
 /// Compact rotary knob. Hold the left button and drag up to increase, down to decrease;
@@ -241,11 +319,42 @@ pub fn tabs(ui: &mut Ui, cur: &mut usize, names: &[&str]) {
     ui.add_space(10.0);
 }
 
-pub fn primary(ui: &mut Ui, t: &str) -> bool {
-    ui.add(Button::new(RichText::new(t).color(BG).strong()).fill(WHITE).stroke(Stroke::new(1.0_f32, WHITE))).clicked()
+/// Run `f` with button visuals overridden: accent-tinted fill and outline.
+fn with_button_style<R>(ui: &mut Ui, primary: bool, f: impl FnOnce(&mut Ui) -> R) -> R {
+    // Applied in place (not in a child ui) so buttons still wrap inside horizontal_wrapped rows.
+    let saved = ui.style().clone();
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    let v = ui.visuals_mut();
+    let (fill, hov, act, stroke, hstroke) = if primary {
+        (ACCENT, Color32::from_rgb(130, 218, 255), Color32::WHITE, ACCENT, Color32::WHITE)
+    } else {
+        (Color32::from_rgb(15, 36, 54), Color32::from_rgb(21, 58, 86), Color32::from_rgb(28, 80, 116), Color32::from_rgb(30, 98, 136), ACCENT)
+    };
+    v.widgets.inactive.weak_bg_fill = fill;
+    v.widgets.inactive.bg_fill = fill;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, stroke);
+    v.widgets.hovered.weak_bg_fill = hov;
+    v.widgets.hovered.bg_fill = hov;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, hstroke);
+    v.widgets.active.weak_bg_fill = act;
+    v.widgets.active.bg_fill = act;
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, hstroke);
+    let r = f(ui);
+    ui.set_style(saved);
+    r
 }
+
+/// Main action: solid accent fill, dark text, sized to its label.
+pub fn primary(ui: &mut Ui, t: &str) -> bool {
+    with_button_style(ui, true, |ui| ui.add(Button::new(RichText::new(t).color(Color32::from_rgb(4, 14, 22)).strong()).min_size(vec2(0.0, 32.0))).clicked())
+}
+/// Like `button`, but can be disabled without wrapping the button in a child ui.
+pub fn button_en(ui: &mut Ui, enabled: bool, t: &str) -> bool {
+    with_button_style(ui, false, |ui| ui.add_enabled(enabled, Button::new(RichText::new(t).color(WHITE)).min_size(vec2(0.0, 32.0))).clicked())
+}
+/// Standard button: accent-tinted dark fill with an accent outline, sized to its label.
 pub fn button(ui: &mut Ui, t: &str) -> bool {
-    ui.button(t).clicked()
+    with_button_style(ui, false, |ui| ui.add(Button::new(RichText::new(t).color(WHITE)).min_size(vec2(0.0, 32.0))).clicked())
 }
 pub fn danger(ui: &mut Ui, t: &str) -> bool {
     let r = ui.add(Button::new(RichText::new(t).color(Color32::WHITE).strong()).fill(Color32::from_rgb(150, 30, 30)).stroke(Stroke::new(1.0_f32, ERR)));
@@ -277,17 +386,17 @@ pub fn wrap(ui: &mut Ui, w: f32, text: impl Into<egui::WidgetText>) {
 pub fn th(ui: &mut Ui, t: &str) {
     ui.label(RichText::new(t.to_uppercase()).size(10.5).color(DIM).monospace());
 }
-/// A single inset tile: small caption above a large value.
-pub fn tile(ui: &mut Ui, w: f32, caption: &str, value: &str) {
+/// A single inset tile: small caption above a large value. `h` is the shared row height.
+pub fn tile(ui: &mut Ui, w: f32, h: f32, caption: &str, value: &str) {
     Frame::new()
         .fill(CARD)
         .stroke(Stroke::new(1.0_f32, CARD_LINE))
-        .corner_radius(7)
+        .corner_radius(8)
         .inner_margin(Margin::symmetric(11, 8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.set_width(w - 24.0);
-                ui.set_min_height(36.0);
+                ui.set_min_height((h - 18.0).max(20.0));
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(dim(caption));
                 ui.add(egui::Label::new(mono(value).size(14.5).color(WHITE)).wrap());
@@ -295,7 +404,7 @@ pub fn tile(ui: &mut Ui, w: f32, caption: &str, value: &str) {
         });
 }
 
-/// A wrapped grid of equal tiles that fills the available width.
+/// A grid of equal tiles that fills the available width and keeps every row one height.
 pub fn tiles(ui: &mut Ui, items: &[(&str, String)]) {
     tiles_min(ui, items, 168.0);
 }
@@ -305,10 +414,16 @@ pub fn tiles_min(ui: &mut Ui, items: &[(&str, String)], min_w: f32) {
     let n = (((avail + gap) / (min_w + gap)).floor() as usize).clamp(1, items.len().max(1));
     let w = (avail - gap * (n as f32 - 1.0)) / n as f32;
     for row in items.chunks(n) {
+        let mut vh = 0.0_f32;
+        for (_, v) in row {
+            let g = ui.painter().layout(v.clone(), FontId::monospace(14.5), WHITE, (w - 24.0).max(20.0));
+            vh = vh.max(g.size().y);
+        }
+        let h = vh + 15.0 + 2.0 + 16.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (k, v) in row {
-                tile(ui, w, k, v);
+                tile(ui, w, h, k, v);
             }
         });
         ui.add_space(gap - 2.0);
@@ -589,4 +704,148 @@ pub fn ramp_legend(ui: &mut Ui, w: f32, range: (f32, f32)) {
 pub fn fmt_dur(secs: f32) -> String {
     let s = secs.max(0.0) as u32;
     format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
+}
+
+/// Console palette: G/M codes use the accent, macros a violet, then warning / error / ok.
+pub const MACRO: Color32 = Color32::from_rgb(176, 148, 255);
+
+fn is_gm(t: &str) -> bool {
+    let mut c = t.chars();
+    matches!(c.next(), Some('G') | Some('M') | Some('g') | Some('m')) && t.len() > 1 && t[1..].chars().all(|x| x.is_ascii_digit() || x == '.')
+}
+fn is_macro(t: &str) -> bool {
+    t.len() >= 3 && t.chars().all(|x| x.is_ascii_uppercase() || x.is_ascii_digit() || x == '_') && t.chars().any(|x| x.is_ascii_uppercase())
+}
+fn split_param(t: &str) -> Option<(char, &str)> {
+    let mut c = t.chars();
+    let l = c.next()?;
+    let rest = &t[l.len_utf8()..];
+    (l.is_ascii_alphabetic() && !rest.is_empty() && rest.chars().all(|x| x.is_ascii_digit() || x == '.' || x == '-')).then_some((l, rest))
+}
+
+/// Colour-coded layout for one console line.
+pub fn console_job(line: &str) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let f = |c: Color32| TextFormat { font_id: FontId::monospace(13.0), color: c, ..Default::default() };
+    let mut j = LayoutJob::default();
+    let lower = line.to_lowercase();
+    if let Some(rest) = line.strip_prefix("> ") {
+        j.append("> ", 0.0, f(FAINT));
+        for (i, tok) in rest.split(' ').enumerate() {
+            if i > 0 {
+                j.append(" ", 0.0, f(DIM));
+            }
+            if i == 0 && is_gm(tok) {
+                j.append(&tok.to_uppercase(), 0.0, f(ACCENT));
+            } else if i == 0 && is_macro(tok) {
+                j.append(tok, 0.0, f(MACRO));
+            } else if let Some((l, v)) = split_param(tok) {
+                j.append(&l.to_string(), 0.0, f(Color32::from_rgb(150, 160, 175)));
+                j.append(v, 0.0, f(WHITE));
+            } else {
+                j.append(tok, 0.0, f(TEXT));
+            }
+        }
+    } else if lower.starts_with("error") || line.starts_with("!!") {
+        j.append(line, 0.0, f(ERR));
+    } else if lower.starts_with("warning") {
+        j.append(line, 0.0, f(WARN));
+    } else if lower.starts_with("ok") {
+        j.append("ok", 0.0, f(OK));
+        j.append(&line[2..], 0.0, f(DIM));
+    } else if line.starts_with("//") {
+        j.append(line, 0.0, f(FAINT));
+    } else {
+        j.append(line, 0.0, f(Color32::from_rgb(170, 175, 185)));
+    }
+    j
+}
+
+/// Standard card widths for page layouts: full, half and quarter of the row.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Span { Full, Half, Quarter }
+
+/// Flow layout: cards sit left to right at natural height and wrap onto new rows.
+/// On narrow windows quarter cards become half width and half cards become full width.
+pub struct Flow<'a> {
+    ui: &'a mut Ui,
+    w: f32,
+}
+impl Flow<'_> {
+    pub fn card(&mut self, span: Span, f: impl FnOnce(&mut Ui)) {
+        let gap = 8.0;
+        let w = self.w;
+        let eff = if w < 560.0 { Span::Full } else if w < 1000.0 { if span == Span::Quarter { Span::Half } else { span } } else { span };
+        let cw = match eff {
+            Span::Full => w,
+            Span::Half => (w - gap) / 2.0,
+            Span::Quarter => (w - 3.0 * gap) / 4.0,
+        } - 2.0;
+        self.ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(cw);
+            f(ui);
+        });
+    }
+}
+pub fn flow(ui: &mut Ui, f: impl FnOnce(&mut Flow)) {
+    let w = ui.available_width();
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+        let mut fl = Flow { ui, w };
+        f(&mut fl);
+    });
+}
+
+/// A card with a thin border; the border takes the accent colour when `selected`.
+pub fn card_frame(ui: &mut Ui, w: f32, selected: bool, f: impl FnOnce(&mut Ui)) {
+    Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(if selected { 1.5_f32 } else { 1.0_f32 }, if selected { ACCENT } else { CARD_LINE }))
+        .corner_radius(10)
+        .inner_margin(Margin::same(12))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(w - 26.0);
+                f(ui);
+            });
+        });
+}
+
+/// Responsive grid of cards: as many columns as fit at `min_w`, never clipped.
+pub fn card_grid(ui: &mut Ui, count: usize, min_w: f32, mut f: impl FnMut(&mut Ui, usize, f32)) {
+    let gap = 8.0;
+    let avail = ui.available_width();
+    let n = (((avail + gap) / (min_w + gap)).floor() as usize).clamp(1, count.max(1));
+    let w = (avail - gap * (n as f32 - 1.0)) / n as f32 - 1.0;
+    let all: Vec<usize> = (0..count).collect();
+    for row in all.chunks(n) {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for &i in row {
+                ui.allocate_ui_with_layout(vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(w);
+                    f(ui, i, w);
+                });
+            }
+        });
+        ui.add_space(gap);
+    }
+}
+
+/// Mark the next `panel` as a draggable dashboard card with this id.
+pub fn set_card(ctx: &egui::Context, id: u8) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("cur_card"), id));
+}
+
+/// Row card with a title line and labelled wrapped fields, used instead of wide tables.
+pub fn info_card(ui: &mut Ui, title: &str, fields: &[(&str, String)]) {
+    row_card(ui, |ui| {
+        ui.add(egui::Label::new(RichText::new(title).strong().size(13.5).color(WHITE)).wrap());
+        for (k, v) in fields {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(dim(*k));
+                ui.add(egui::Label::new(RichText::new(v.clone()).size(12.5)).wrap());
+            });
+        }
+    });
 }

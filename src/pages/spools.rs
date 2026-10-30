@@ -96,24 +96,31 @@ fn inventory(ui: &mut Ui, m: &mut Model) {
                 && (!m.st.sp_low || m.spool_status(s).0 != Status::Ok)
         }).collect();
         ui.label(dim(format!("{} spool(s)", rows.len())));
-        egui::ScrollArea::both().id_salt("sp_tbl").max_height(330.0).auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("sp_grid").num_columns(8).striped(true).spacing([14.0, 5.0]).show(ui, |ui| {
-                for h in ["Code", "Brand", "Material", "Colour", "Remaining", "Location", "Status", "Label"] { th(ui, h); }
-                ui.end_row();
-                for &i in &rows {
-                    let s = &m.fspools[i];
-                    if ui.selectable_label(m.st.sel_spool_id == s.id, code(s.id)).clicked() { m.st.sel_spool_id = s.id; }
-                    ui.label(s.brand.clone());
-                    ui.label(s.mat.clone());
-                    ui.label(s.color.clone());
-                    ui.horizontal(|ui| { bar(ui, pct(s), 70.0, if s.left < m.low_thr { Some(Status::Warn) } else { None }); ui.label(mono(format!("{:.0} g", s.left))); });
-                    ui.label(loc_text(m, s));
-                    let (st, tx) = m.spool_status(s);
-                    status(ui, st, &tx);
-                    ui.label(dim(if s.printed { "printed" } else { "-" }));
-                    ui.end_row();
-                }
+        egui::ScrollArea::vertical().id_salt("sp_tbl").max_height(520.0).auto_shrink([false, true]).show(ui, |ui| {
+            let sel = m.st.sel_spool_id;
+            let cards: Vec<(u32, String, String, f32, f32, String, (Status, String), bool, bool)> = rows.iter().map(|&i| {
+                let s = &m.fspools[i];
+                (s.id, format!("{} {}", s.brand, s.mat), s.color.clone(), s.left, pct(s), loc_text(m, s), m.spool_status(s), s.printed, s.left < m.low_thr)
+            }).collect();
+            let mut pick = None;
+            card_grid(ui, cards.len(), 250.0, |ui, n, w| {
+                let (id, title, color, left, frac, loc, st, printed, low) = &cards[n];
+                card_frame(ui, w, sel == *id, |ui| {
+                    if ui.selectable_label(sel == *id, RichText::new(code(*id)).monospace().strong().size(13.0)).clicked() { pick = Some(*id); }
+                    ui.label(RichText::new(title.clone()).size(13.5).color(WHITE));
+                    ui.label(dim(color.clone()));
+                    ui.add_space(4.0);
+                    accent_bar(ui, *frac, ui.available_width());
+                    ui.label(mono(format!("{:.0} g left", left)).size(12.0).color(if *low { WARN } else { WHITE }));
+                    ui.add_space(2.0);
+                    ui.label(dim(loc.clone()).size(11.5));
+                    ui.horizontal(|ui| {
+                        status(ui, st.0, &st.1);
+                        if !printed { ui.label(dim("no label")); }
+                    });
+                });
             });
+            if let Some(id) = pick { m.st.sel_spool_id = id; }
         });
     });
     detail(ui, m);
@@ -129,8 +136,8 @@ fn detail(ui: &mut Ui, m: &mut Model) {
     #[derive(Clone)]
     enum A { Load(usize, u8), Unload, Dry, Shelf(String), Archive, Restore, Delete, Dup, Weigh(f32), Label }
     let mut act: Option<A> = None;
-    ui.columns(2, |c| {
-        panel(&mut c[0], &format!("Spool {}", code(id)), |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), &format!("Spool {}", code(id)), |ui| {
             ui.horizontal(|ui| {
                 qr_widget(ui, &qr_payload(id), 120.0);
                 ui.vertical(|ui| {
@@ -195,7 +202,7 @@ fn detail(ui: &mut Ui, m: &mut Model) {
                 if button(ui, "Delete") { act = Some(A::Delete); }
             });
         });
-        panel(&mut c[1], "Tracking history", |ui| {
+        panel(c.at(1), "Tracking history", |ui| {
             egui::ScrollArea::vertical().id_salt("sp_hist").max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
                 for l in m.fspools[si].history.iter().rev() {
                     ui.horizontal_wrapped(|ui| { ui.label(mono(l.clone()).size(12.0)); });
@@ -379,8 +386,8 @@ fn fill_from(e: &mut SpoolEntry, c: &(&str, &str, &str, &str, f32, f32, f32)) {
 
 fn labels(ui: &mut Ui, m: &mut Model) {
     let preview_id = m.label.sel.first().copied().or_else(|| m.fspools.first().map(|s| s.id)).unwrap_or(0);
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Label designer", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Label designer", |ui| {
             egui::Grid::new("lbl_cfg").num_columns(2).spacing([14.0, 7.0]).show(ui, |ui| {
                 ui.label(dim("Printer"));
                 let pn = m.printers.get(m.label.printer).map(|p| format!("{}  -  {}", p.name, p.lang.name())).unwrap_or_default();
@@ -403,7 +410,7 @@ fn labels(ui: &mut Ui, m: &mut Model) {
                 ui.checkbox(&mut m.label.show_lot, "Lot");
             });
         });
-        panel(&mut c[1], "Label preview", |ui| {
+        panel(c.at(1), "Label preview", |ui| {
             if let Some(si) = m.spool_idx(preview_id) {
                 let s = m.fspools[si].clone();
                 let size = &SIZES[m.label.size];
@@ -482,28 +489,24 @@ fn labels(ui: &mut Ui, m: &mut Model) {
         }
     });
 
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Printers", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Printers", |ui| {
             let mut rm = None;
-            egui::Grid::new("printers").num_columns(4).striped(true).spacing([12.0, 5.0]).show(ui, |ui| {
-                for h in ["Name", "Language", "Connection", ""] { th(ui, h); }
-                ui.end_row();
-                for (i, p) in m.printers.iter().enumerate() {
-                    ui.label(&p.name);
-                    ui.label(dim(p.lang.name()));
-                    ui.label(dim(format!("{} {}", p.conn.name(), p.addr)));
-                    if !p.demo && sbtn(ui, "remove").clicked() { rm = Some(i); }
-                    ui.end_row();
-                }
-            });
+            for (i, p) in m.printers.iter().enumerate() {
+                row_card(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&p.name).strong().size(13.5).color(WHITE)).wrap());
+                    ui.add(egui::Label::new(dim(format!("{}  -  {} {}", p.lang.name(), p.conn.name(), p.addr))).wrap());
+                    if !p.demo && sbtn(ui, "Remove").clicked() { rm = Some(i); }
+                });
+            }
             if let Some(i) = rm { m.printers.remove(i); m.label.printer = 0; }
             ui.add_space(6.0);
             ui.label(RichText::new("ADD PRINTER").size(11.0).color(DIM).monospace());
             ui.horizontal_wrapped(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut m.label.np_name).hint_text("name").desired_width(130.0));
-                egui::ComboBox::from_id_salt("np_conn").width(150.0).selected_text(["Network (RAW 9100)", "USB", "Bluetooth"][m.label.np_conn]).show_ui(ui, |ui| { for (i, n) in ["Network (RAW 9100)", "USB", "Bluetooth"].iter().enumerate() { ui.selectable_value(&mut m.label.np_conn, i, *n); } });
-                egui::ComboBox::from_id_salt("np_lang").width(150.0).selected_text(["ZPL", "TSPL", "ESC/POS", "CPCL"][m.label.np_lang]).show_ui(ui, |ui| { for (i, n) in ["ZPL", "TSPL", "ESC/POS", "CPCL"].iter().enumerate() { ui.selectable_value(&mut m.label.np_lang, i, *n); } });
-                ui.add(egui::TextEdit::singleline(&mut m.label.np_addr).hint_text("host:9100").desired_width(130.0));
+                ui.add(egui::TextEdit::singleline(&mut m.label.np_name).hint_text("name").desired_width(100.0));
+                egui::ComboBox::from_id_salt("np_conn").width(104.0).selected_text(["Network (RAW 9100)", "USB", "Bluetooth"][m.label.np_conn]).show_ui(ui, |ui| { for (i, n) in ["Network (RAW 9100)", "USB", "Bluetooth"].iter().enumerate() { ui.selectable_value(&mut m.label.np_conn, i, *n); } });
+                egui::ComboBox::from_id_salt("np_lang").width(84.0).selected_text(["ZPL", "TSPL", "ESC/POS", "CPCL"][m.label.np_lang]).show_ui(ui, |ui| { for (i, n) in ["ZPL", "TSPL", "ESC/POS", "CPCL"].iter().enumerate() { ui.selectable_value(&mut m.label.np_lang, i, *n); } });
+                ui.add(egui::TextEdit::singleline(&mut m.label.np_addr).hint_text("host:9100").desired_width(100.0));
                 if button(ui, "Add") && !m.label.np_name.trim().is_empty() {
                     m.printers.push(Printer { name: m.label.np_name.trim().into(), conn: [Conn::Network, Conn::Usb, Conn::Bluetooth][m.label.np_conn], lang: [Lang::Zpl, Lang::Tspl, Lang::EscPos, Lang::Cpcl][m.label.np_lang], addr: m.label.np_addr.clone(), demo: false });
                     m.label.np_name.clear();
@@ -511,7 +514,7 @@ fn labels(ui: &mut Ui, m: &mut Model) {
             });
             ui.label(dim("Network printers receive the label data directly on port 9100. USB and Bluetooth printers get a raw file in ~/MACH5-labels to send with the OS print spooler. Demo printers only simulate."));
         });
-        panel(&mut c[1], "Print history", |ui| {
+        panel(c.at(1), "Print history", |ui| {
             if m.label_jobs.is_empty() { ui.label(dim("No labels printed yet.")); }
             for j in m.label_jobs.iter().rev().take(8) {
                 ui.horizontal_wrapped(|ui| {
@@ -551,25 +554,26 @@ fn usage(ui: &mut Ui, m: &mut Model) {
             }
         });
     });
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Needs attention", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Needs attention", |ui| {
             let mut open: Option<u32> = None;
             let list: Vec<(u32, Status, String)> = m.fspools.iter().filter_map(|s| { let (st, tx) = m.spool_status(s); if matches!(st, Status::Ok | Status::Off) { None } else { Some((s.id, st, tx)) } }).collect();
             if list.is_empty() { ui.label(dim("Nothing needs attention.")); }
-            egui::Grid::new("attn").num_columns(5).striped(true).spacing([14.0, 5.0]).show(ui, |ui| {
-                for (id, st, tx) in &list {
-                    let s = &m.fspools[m.spool_idx(*id).unwrap()];
-                    ui.label(mono(code(*id)));
-                    ui.label(format!("{} {}", s.mat, s.color));
-                    ui.label(dim(loc_text(m, s)));
-                    status(ui, *st, tx);
-                    if sbtn(ui, "open").clicked() { open = Some(*id); }
-                    ui.end_row();
-                }
-            });
+            for (id, st, tx) in &list {
+                let s = &m.fspools[m.spool_idx(*id).unwrap()];
+                row_card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(mono(code(*id)).strong());
+                        ui.label(format!("{} {}", s.mat, s.color));
+                        status(ui, *st, tx);
+                    });
+                    ui.label(dim(loc_text(m, s)).size(11.5));
+                    if sbtn(ui, "Open").clicked() { open = Some(*id); }
+                });
+            }
             if let Some(id) = open { m.st.sel_spool_id = id; m.st.tab = 0; }
         });
-        panel(&mut c[1], "Consumption, last 14 days (g/day)", |ui| {
+        panel(c.at(1), "Consumption, last 14 days (g/day)", |ui| {
             let today: f32 = m.fspools.iter().map(|s| s.used).sum::<f32>() * 0.0 + m.fleet.iter().filter(|f| f.state == MState::Printing).count() as f32 * 180.0;
             let pts: Vec<[f32; 2]> = (0..14).map(|d| [d as f32, if d == 13 { today } else { 1500.0 + ((d as f32 * 1.7).sin() * 450.0) + ((d * 37 % 11) as f32) * 40.0 }]).collect();
             plot(ui, 160.0, &[Series::new("grams", ACCENT, pts)], (0.0, 13.0), (0.0, 3000.0), "g per day");

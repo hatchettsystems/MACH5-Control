@@ -210,6 +210,10 @@ impl Model {
     }
 
     pub fn alert(&mut self, machine: usize, sev: Sev, msg: &str) {
+        if machine == self.active {
+            let l = match sev { Sev::Err => format!("error: {}", msg), Sev::Warn => format!("warning: {}", msg), Sev::Info => format!("// {}", msg) };
+            self.st.console.push(l);
+        }
         let ts = fmt_ts(self.t);
         self.alerts.push(FAlert { ts, machine, sev, msg: msg.into(), ack: false });
         if self.alerts.len() > 120 {

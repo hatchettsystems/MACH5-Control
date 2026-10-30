@@ -6,8 +6,8 @@ use eframe::egui::{self, vec2, DragValue, RichText, Ui};
 
 pub fn motion(ui: &mut Ui, m: &mut Model) {
     title(ui, "Motion", "Third-order jerk-limited planner. Input shaping and pressure advance live inside the planner");
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Planner limits", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Planner limits", |ui| {
             egui::Grid::new("planner").num_columns(2).spacing([20.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("Max velocity"));
                 ui.add(DragValue::new(&mut m.vmax).range(10.0..=1500.0).suffix(" mm/s"));
@@ -30,7 +30,7 @@ pub fn motion(ui: &mut Ui, m: &mut Model) {
             ui.add_space(4.0);
             ui.label(dim("No junction deviation: corners are blended inside the third-order profile. The benchmark that decides this is an open decision (see Spec)."));
         });
-        panel(&mut c[1], "Profile preview (illustrative)", |ui| {
+        panel(c.at(1), "Profile preview (illustrative)", |ui| {
             let a = m.accel[0].max(100.0);
             let v = m.vmax.min(300.0);
             let ta = v / a;
@@ -60,30 +60,31 @@ pub fn motion(ui: &mut Ui, m: &mut Model) {
             plot(ui, 180.0, &[Series::new("trapezoid v", G3, trap).dashed(), Series::new("3rd-order v", G1, s3), Series::new("accel (scaled)", G2, ac)], (0.0, total * 1000.0), (-v * 0.4, v * 1.05), "mm/s  vs  ms");
         });
     });
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Input shaper (applied in planner)", |ui| {
-            egui::Grid::new("shapers").num_columns(6).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
-                for h in ["Axis", "Type", "Freq", "Damping", "Max accel", "Measured"] { th(ui, h); }
-                ui.end_row();
-                for s in m.shapers.iter_mut() {
-                    ui.label(mono(s.axis));
-                    egui::ComboBox::from_id_salt(("shp", s.axis)).width(90.0).selected_text(SHAPERS[s.kind]).show_ui(ui, |ui| {
-                        for (k, n) in SHAPERS.iter().enumerate() { ui.selectable_value(&mut s.kind, k, *n); }
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Input shaper (applied in planner)", |ui| {
+            for s in m.shapers.iter_mut() {
+                row_card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("Axis {}", s.axis)).strong().size(14.0).color(WHITE));
+                        ui.label(dim(format!("measured {}", s.when)));
                     });
-                    ui.add(DragValue::new(&mut s.freq).range(5.0..=200.0).speed(0.1).suffix(" Hz"));
-                    ui.add(DragValue::new(&mut s.damp).range(0.0..=0.5).speed(0.005));
-                    ui.label(mono(format!("{:.0}", s.max_accel)));
-                    ui.label(dim(s.when));
-                    ui.end_row();
-                }
-            });
+                    ui.horizontal_wrapped(|ui| {
+                        egui::ComboBox::from_id_salt(("shp", s.axis)).width(80.0).selected_text(SHAPERS[s.kind]).show_ui(ui, |ui| {
+                            for (k, n) in SHAPERS.iter().enumerate() { ui.selectable_value(&mut s.kind, k, *n); }
+                        });
+                        ui.add(DragValue::new(&mut s.freq).range(5.0..=200.0).speed(0.1).suffix(" Hz"));
+                        ui.add(DragValue::new(&mut s.damp).range(0.0..=0.5).speed(0.005));
+                        ui.label(mono(format!("max {:.0} mm/s2", s.max_accel)).size(12.0).color(DIM));
+                    });
+                });
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if button(ui, "Run resonance test") { m.st.tab = 3; m.goto = Some(Page::Calibration); }
                 ui.label(dim("Results are saved per axis and applied automatically."));
             });
         });
-        panel(&mut c[1], "Pressure advance (applied in planner)", |ui| {
+        panel(c.at(1), "Pressure advance (applied in planner)", |ui| {
             ui.checkbox(&mut m.pa_on, "Enable pressure advance");
             egui::Grid::new("pa").num_columns(2).spacing([20.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("Smooth time"));
@@ -131,8 +132,8 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
     tabs(ui, &mut m.st.tab, &["Auto-calibration", "Bed mesh", "Gantry leveling", "Resonance", "Pressure advance"]);
     match m.st.tab {
         0 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Auto-calibration routine", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Auto-calibration routine", |ui| {
                     let steps = ["Home X / Y / Z (eddy)", "Probe thermal soak and compensation", "Gantry level (3 Z motors)", "X-twist calibration", "Adaptive bed mesh", "Verify and save"];
                     egui::Grid::new("autocal").num_columns(3).spacing([16.0, 7.0]).show(ui, |ui| {
                         for (k, s) in steps.iter().enumerate() {
@@ -160,7 +161,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                         if printing { ui.label(dim("stop the print first")); }
                     });
                 });
-                panel(&mut c[1], "Last results", |ui| {
+                panel(c.at(1), "Last results", |ui| {
                     let (mn, mx) = m.mesh.iter().flatten().fold((9.0f32, -9.0f32), |a, v| (a.0.min(*v), a.1.max(*v)));
                     kv(ui, "autocal_res", &[
                         ("Date", "2026-10-28 08:05".into()),
@@ -177,8 +178,8 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
             });
         }
         1 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Bed mesh (um deviation)", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Bed mesh (um deviation)", |ui| {
                     let b = if m.mesh_adaptive { objects_bounds(m) } else { None };
                     let (lo, hi) = m.mesh.iter().flatten().fold((9.0f32, -9.0f32), |a, v| (a.0.min(*v), a.1.max(*v)));
                     heatmap(ui, &m.mesh, vec2(ui.available_width().min(520.0), 440.0), (lo, hi), b, (350.0, 350.0));
@@ -186,7 +187,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                     ramp_legend(ui, ui.available_width().min(520.0), (lo, hi));
                     ui.label(dim("White outline = adaptive region derived from parsed G-code."));
                 });
-                panel(&mut c[1], "Mesh", |ui| {
+                panel(c.at(1), "Mesh", |ui| {
                     let all: Vec<f32> = m.mesh.iter().flatten().copied().collect();
                     let mean = all.iter().sum::<f32>() / all.len() as f32;
                     let sd = (all.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / all.len() as f32).sqrt();
@@ -209,8 +210,8 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
             });
         }
         2 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Gantry leveling (probe-driven, any Z-motor count)", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Gantry leveling (probe-driven, any Z-motor count)", |ui| {
                     egui::Grid::new("lvl").num_columns(3).spacing([16.0, 7.0]).show(ui, |ui| {
                         for h in ["Motor", "Error", ""] { th(ui, h); }
                         ui.end_row();
@@ -227,7 +228,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                         m.log(Sev::Info, "level", "Gantry levelled, residual < 2 um");
                     }
                 });
-                panel(&mut c[1], "X twist", |ui| {
+                panel(c.at(1), "X twist", |ui| {
                     let pts: Vec<[f32; 2]> = (0..=20).map(|k| { let x = k as f32 * 17.5; [x, m.xtwist * (x / 350.0 - 0.5) * 2.0 * 1000.0 + (x * 0.05).sin() * 2.0] }).collect();
                     plot(ui, 150.0, &[Series::new("correction", G1, pts)], (0.0, 350.0), (-30.0, 30.0), "um vs X mm");
                     ui.label(dim("Measured by the eddy probe along X; applied by the planner."));
@@ -258,13 +259,13 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
             let fr: Vec<f32> = (0..=72).map(|k| 5.0 + k as f32 * 2.0).collect();
             match m.st.tab2 {
                 0 => {
-                    ui.columns(2, |c| {
-                        panel(&mut c[0], "Power spectrum", |ui| {
+                    adaptive(ui, 2, |c| {
+                        panel(c.at(0), "Power spectrum", |ui| {
                             let x: Vec<[f32; 2]> = fr.iter().map(|f| [*f, psd(*f, &[(48.2, 3.0, 0.9), (95.0, 6.0, 0.22)])]).collect();
                             let y: Vec<[f32; 2]> = fr.iter().map(|f| [*f, psd(*f, &[(41.6, 3.5, 1.0), (78.0, 5.0, 0.25)])]).collect();
                             plot(ui, 230.0, &[Series::new("X", G1, x), Series::new("Y", G2, y)], (5.0, 149.0), (0.0, 1.1), "PSD vs Hz");
                         });
-                        panel(&mut c[1], "Recommended shapers", |ui| {
+                        panel(c.at(1), "Recommended shapers", |ui| {
                             for s in m.shapers.iter() {
                                 kv(ui, ("rec_".to_string() + s.axis).as_str(), &[
                                     ("Axis", s.axis.into()),
@@ -292,8 +293,8 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
             }
         }
         _ => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Calibration print", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Calibration print", |ui| {
                     egui::Grid::new("pa_gen").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                         ui.label(dim("Profile"));
                         egui::ComboBox::from_id_salt("pa_prof").selected_text(m.profiles[m.st.pa_profile].name).show_ui(ui, |ui| {
@@ -316,7 +317,7 @@ pub fn calibration(ui: &mut Ui, m: &mut Model) {
                         if button(ui, "Analyse result") { m.st.pa_done = true; }
                     });
                 });
-                panel(&mut c[1], "Analysis", |ui| {
+                panel(c.at(1), "Analysis", |ui| {
                     let pts: Vec<[f32; 2]> = (0..=40).map(|k| { let x = m.st.pa_lo + (m.st.pa_hi - m.st.pa_lo) * k as f32 / 40.0; [x, 0.6 + 120.0 * (x - 0.044).powi(2)] }).collect();
                     plot(ui, 150.0, &[Series::new("corner bulge", G1, pts)], (m.st.pa_lo, m.st.pa_hi.max(m.st.pa_lo + 0.01)), (0.0, 1.0), "mm vs PA");
                     if m.st.pa_done {
@@ -348,8 +349,8 @@ fn objects_bounds(m: &Model) -> Option<(f32, f32, f32, f32)> {
 pub fn probe(ui: &mut Ui, m: &mut Model) {
     title(ui, "Eddy Probe", "Own STM32 eddy probe on CAN FD B, read by the P4. No dedicated trigger line");
     let t = m.t as f32;
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Driver and status", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Driver and status", |ui| {
             ui.horizontal(|ui| {
                 ui.label(dim("Driver"));
                 egui::ComboBox::from_id_salt("probe_drv").selected_text(["MACH5 eddy probe", "Beacon (compatibility)", "Cartographer (compatibility)"][m.probe_driver]).show_ui(ui, |ui| {
@@ -369,19 +370,19 @@ pub fn probe(ui: &mut Ui, m: &mut Model) {
             ]);
             if m.probe_driver != 0 { ui.label(dim("Compatibility driver only. Homing, mesh and X-twist still run in the unified routine.")); }
         });
-        panel(&mut c[1], "Temperature compensation", |ui| {
+        panel(c.at(1), "Temperature compensation", |ui| {
             ui.checkbox(&mut m.probe_comp, "Temperature-compensated Z");
             let raw: Vec<[f32; 2]> = (0..=30).map(|k| { let tc = 25.0 + k as f32 * 2.0; [tc, 2.0 + (tc - 25.0) * 0.0021] }).collect();
             let comp: Vec<[f32; 2]> = raw.iter().map(|p| [p[0], if m.probe_comp { 2.0 + (p[0] * 0.3).sin() * 0.0004 } else { p[1] }]).collect();
             plot(ui, 150.0, &[Series::new("raw", G3, raw).dashed(), Series::new("compensated", G1, comp)], (25.0, 85.0), (1.95, 2.15), "mm vs probe C");
         });
     });
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Live height", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Live height", |ui| {
             let pts: Vec<[f32; 2]> = (0..200).map(|k| { let x = k as f32; [x, 2.0 + ((t * 8.0 + x * 0.7).sin() * 0.0012 + (x * 2.3).cos() * 0.0007)] }).collect();
             plot(ui, 140.0, &[Series::new("z", G1, pts)], (0.0, 200.0), (1.99, 2.01), "mm");
         });
-        panel(&mut c[1], "Procedures", |ui| {
+        panel(c.at(1), "Procedures", |ui| {
             egui::Grid::new("probe_btns").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("Z offset"));
                 ui.add(DragValue::new(&mut m.z_offset).speed(0.001).range(-2.0..=2.0).suffix(" mm"));
@@ -419,8 +420,8 @@ pub fn drives(ui: &mut Ui, m: &mut Model) {
         });
     });
     let k = m.st.sel_drive.min(m.drives.len() - 1);
-    ui.columns(2, |c| {
-        panel(&mut c[0], &format!("Motor characterisation - axis {}", m.drives[k].axis), |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), &format!("Motor characterisation - axis {}", m.drives[k].axis), |ui| {
             let d = &mut m.drives[k];
             egui::Grid::new("drive_tune").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("Phase resistance"));
@@ -452,7 +453,7 @@ pub fn drives(ui: &mut Ui, m: &mut Model) {
             }
             ui.label(dim("No manual register work. Values are stored per motor in config."));
         });
-        panel(&mut c[1], "Interface and following error", |ui| {
+        panel(c.at(1), "Interface and following error", |ui| {
             kv(ui, "drive_if", &[
                 ("STEP / DIR / EN", "hardwired".into()),
                 ("CAN FD A", format!("{} (config and faults)", m.drives[k].node)),

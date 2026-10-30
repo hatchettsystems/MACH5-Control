@@ -1,14 +1,14 @@
 use crate::data::*;
 use crate::theme::*;
 use crate::ui::*;
-use eframe::egui::{self, Ui};
+use eframe::egui::{self, RichText, Ui};
 
 pub fn can_bus(ui: &mut Ui, m: &mut Model) {
     title(ui, "CAN FD Bus", "Two physical segments, one protocol: A (drive) stays quiet, B (peripherals) carries streams and updates");
-    ui.columns(2, |c| {
-        for (k, col) in c.iter_mut().enumerate() {
+    adaptive(ui, 2, |c| {
+        for k in 0..2 {
             let (name, seg, ring, arb, dat) = if k == 0 { ("Segment A - drive", Seg::A, &m.h_can_a, 1.0, 5.0) } else { ("Segment B - peripherals", Seg::B, &m.h_can_b, 1.0, 4.0) };
-            panel(col, name, |ui| {
+            panel(c.at(k), name, |ui| {
                 let load = *ring.back().unwrap_or(&0.0);
                 let cnt = m.nodes.iter().filter(|n| n.seg == seg).count();
                 kv(ui, if k == 0 { "can_a" } else { "can_b" }, &[
@@ -24,12 +24,9 @@ pub fn can_bus(ui: &mut Ui, m: &mut Model) {
             });
         }
     });
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Message classes", |ui| {
-            egui::Grid::new("classes").num_columns(4).striped(true).spacing([16.0, 5.0]).show(ui, |ui| {
-                for h in ["Class", "Priority", "Content", "Rate"] { th(ui, h); }
-                ui.end_row();
-                for (cl, pr, ct, rt) in [
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Message classes", |ui| {
+            for (cl, pr, ct, rt) in [
                     ("Fault / e-stop", "Highest", "Over-current, over-temp, encoder loss, power loss", "Event"),
                     ("Time sync", "High", "Master clock, sub-100 us alignment", "10-100 Hz"),
                     ("Heartbeat", "High", "Node state, error counters, firmware hash", "1-10 Hz"),
@@ -38,13 +35,11 @@ pub fn can_bus(ui: &mut Ui, m: &mut Model) {
                     ("Sensor stream", "Low", "Eddy probe and ADXL samples", "~100s frames/s"),
                     ("Config", "Low", "Typed key-value writes, ack + readback", "On demand"),
                     ("Bulk transfer", "Lowest", "Signed firmware images, logs (B only)", "Segment B"),
-                ] {
-                    ui.label(mono(cl)); ui.label(pr); wrap(ui, 260.0, dim(ct)); ui.label(mono(rt));
-                    ui.end_row();
-                }
-            });
+            ] {
+                info_card(ui, cl, &[("Priority", pr.to_string()), ("Carries", ct.to_string()), ("Rate", rt.to_string())]);
+            }
         });
-        panel(&mut c[1], "Time sync and safety behaviour", |ui| {
+        panel(c.at(1), "Time sync and safety behaviour", |ui| {
             let sk = *m.h_sync.back().unwrap_or(&0.0);
             kv(ui, "sync", &[("Master clock", "Host P4, 50 Hz broadcast".into()), ("Current skew", format!("{:.0} us", sk)), ("Limit", "100 us".into())]);
             plot(ui, 80.0, &[Series::from_ring("skew", G1, &m.h_sync), Series::new("limit", G3, vec![[0.0, 100.0], [HIST as f32, 100.0]]).dashed()], (0.0, HIST as f32), (0.0, 120.0), "us");
@@ -85,28 +80,30 @@ pub fn can_bus(ui: &mut Ui, m: &mut Model) {
 pub fn nodes(ui: &mut Ui, m: &mut Model) {
     title(ui, "Nodes", "Every module shares one CAN FD node core: bootloader, identity, telemetry");
     panel(ui, "Hardware family", |ui| {
-        egui::Grid::new("nodes").num_columns(9).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
-            for h in ["Board", "Class", "MCU", "Link", "Addr", "State", "Heartbeat", "Temp", "Firmware"] { th(ui, h); }
-            ui.end_row();
-            for (k, n) in m.nodes.iter().enumerate() {
-                if ui.selectable_label(m.st.sel_node == k, n.name).clicked() { m.st.sel_node = k; }
-                ui.label(mono(n.class));
-                ui.label(dim(n.mcu));
-                ui.label(dim(n.seg.label()));
-                ui.label(mono(format!("0x{:02X}", n.addr)));
+        let sel = m.st.sel_node;
+        let mut pick = None;
+        let nodes = m.nodes.clone();
+        let manifest_ok: Vec<bool> = nodes.iter().map(|n| n.fw == n.want).collect();
+        card_grid(ui, nodes.len(), 250.0, |ui, i, w| {
+            let n = &nodes[i];
+            card_frame(ui, w, sel == i, |ui| {
+                if ui.selectable_label(sel == i, RichText::new(n.name).strong().size(14.0)).clicked() { pick = Some(i); }
                 status(ui, n.status, if n.note.is_empty() { n.status.label() } else { n.note });
-                ui.label(mono(format!("{:.1} Hz", n.hb)));
-                ui.label(mono(format!("{:.0} C / {}", n.temp, n.rated)));
-                ui.label(mono(n.fw).color(if n.fw == n.want { TEXT } else { WARN }));
-                ui.end_row();
-            }
+                ui.add_space(4.0);
+                ui.label(mono(n.class).size(12.0).color(WHITE));
+                ui.label(dim(format!("{}  -  {}  -  addr 0x{:02X}", n.mcu, n.seg.label(), n.addr)));
+                ui.add_space(4.0);
+                ui.label(mono(format!("{:.1} Hz   {:.0} C / {} C", n.hb, n.temp, n.rated)).size(11.5).color(DIM));
+                ui.label(mono(format!("fw {}", n.fw)).size(11.5).color(if manifest_ok[i] { DIM } else { WARN }));
+            });
         });
-        ui.add_space(4.0);
-        ui.label(dim("Mainboard (ESP32-P4 + ESP32-S3 + STM32) is not a CAN node; it terminates both segments. Rated column: ambient C / part rating C."));
+        if let Some(i) = pick { m.st.sel_node = i; }
+        ui.label(dim("Mainboard (ESP32-P4 + ESP32-S3 + STM32) is not a CAN node; it terminates both segments. Temperatures: reading / part rating."));
     });
+
     let k = m.st.sel_node.min(m.nodes.len() - 1);
-    ui.columns(2, |c| {
-        panel(&mut c[0], &format!("{} - identity", m.nodes[k].name), |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), &format!("{} - identity", m.nodes[k].name), |ui| {
             let n = &m.nodes[k];
             kv(ui, "node_id", &[
                 ("Role", n.role.into()),
@@ -125,7 +122,7 @@ pub fn nodes(ui: &mut Ui, m: &mut Model) {
                 if button(ui, "Open firmware") { m.goto = Some(Page::Firmware); }
             });
         });
-        panel(&mut c[1], "Addressing and discovery", |ui| {
+        panel(c.at(1), "Addressing and discovery", |ui| {
             ui.label("Each node has a factory 64-bit ID and a node-class code. The Host assigns a short address on first contact and stores the mapping in config.");
             ui.add_space(4.0);
             if let Some(f) = m.config.iter_mut().find(|s| s.name == "can").and_then(|s| s.fields.iter_mut().find(|f| f.key == "refuse_on_missing_node")) {
@@ -154,8 +151,8 @@ pub fn nodes(ui: &mut Ui, m: &mut Model) {
 pub fn firmware(ui: &mut Ui, m: &mut Model) {
     title(ui, "Firmware", "Signed manifest, per-node dual-bank images with rollback");
     let stale = m.nodes.iter().filter(|n| n.fw != n.want).count();
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Signed manifest", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Signed manifest", |ui| {
             kv(ui, "manifest", &[
                 ("Release", "1.4.2".into()),
                 ("Manifest", m.manifest.into()),
@@ -175,7 +172,7 @@ pub fn firmware(ui: &mut Ui, m: &mut Model) {
             });
             if m.fw.running { bar_full(ui, m.fw.prog, None); }
         });
-        panel(&mut c[1], "Update rules", |ui| {
+        panel(c.at(1), "Update rules", |ui| {
             for t in [
                 "Host reads each node's firmware hash from its heartbeat.",
                 "Only nodes whose image differs from the signed manifest are flashed.",

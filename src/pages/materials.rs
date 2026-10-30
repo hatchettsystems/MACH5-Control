@@ -91,8 +91,8 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
     tabs(ui, &mut m.st.tab2, &["Live", "Failure detection", "Timelapse"]);
     match m.st.tab2 {
         0 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Stream", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Stream", |ui| {
                     let w = ui.available_width();
                     let (r, _) = ui.allocate_exact_size(vec2(w, w * 0.5625), Sense::hover());
                     let p = ui.painter_at(r);
@@ -107,7 +107,7 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
                     p.text(r.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, format!("CAM1  1280x720  15 fps  {}", fmt_dur(m.t as f32)), FontId::monospace(10.0), DIM);
                     p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
                 });
-                panel(&mut c[1], "Camera node", |ui| {
+                panel(c.at(1), "Camera node", |ui| {
                     kv(ui, "cam_stat", &[
                         ("Node", "Camera  ESP32  WiFi".into()),
                         ("Bitrate", "2.4 Mbit/s".into()),
@@ -126,8 +126,8 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
             });
         }
         1 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Detection (runs on PC)", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Detection (runs on PC)", |ui| {
                     ui.checkbox(&mut m.det_on, "Spaghetti / failure detection");
                     egui::Grid::new("det").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
                         ui.label(dim("Sensitivity"));
@@ -142,7 +142,7 @@ pub fn camera(ui: &mut Ui, m: &mut Model) {
                         ui.end_row();
                     });
                 });
-                panel(&mut c[1], "Recent detections", |ui| {
+                panel(c.at(1), "Recent detections", |ui| {
                     egui::Grid::new("det_log").num_columns(3).striped(true).spacing([16.0, 5.0]).show(ui, |ui| {
                         for h in ["Time", "Score", "Outcome"] { th(ui, h); }
                         ui.end_row();

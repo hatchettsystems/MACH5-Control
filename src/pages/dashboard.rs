@@ -1,4 +1,4 @@
-//! Dashboard laid out as separate tiles, row cards and dials rather than key/value tables.
+//! Dashboard: a uniform grid of equal-height cards (two columns, one on narrow windows).
 use super::control::{run_cmd, state_actions, SHAPERS};
 use super::farm::cam_tile;
 use crate::data::*;
@@ -7,42 +7,26 @@ use crate::theme::*;
 use crate::ui::*;
 use eframe::egui::{self, vec2, Align, Color32, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, Ui};
 
-fn split(ui: &mut Ui, m: &mut Model, frac: f32, l: impl FnOnce(&mut Ui, &mut Model), r: impl FnOnce(&mut Ui, &mut Model)) {
-    let w = ui.available_width();
-    let gap = 10.0;
-    let lw = (w - gap) * frac;
-    let rw = w - gap - lw;
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        ui.allocate_ui_with_layout(vec2(lw, 0.0), Layout::top_down(Align::Min), |ui| {
-            ui.set_width(lw);
-            l(ui, &mut *m)
-        });
-        ui.allocate_ui_with_layout(vec2(rw, 0.0), Layout::top_down(Align::Min), |ui| {
-            ui.set_width(rw);
-            r(ui, &mut *m)
-        });
-    });
-}
-
 fn clock(secs: f32) -> String {
     let s = secs as u32 % 86400;
     format!("{:02}:{:02}", s / 3600, (s / 60) % 60)
 }
 
-/// Small bordered row used for lists (nodes, events, history).
-fn mini(ui: &mut Ui, w: f32, f: impl FnOnce(&mut Ui)) {
-    Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, CARD_LINE))
-        .corner_radius(7)
-        .inner_margin(Margin::symmetric(10, 6))
-        .show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.set_width(w - 22.0);
-                ui.horizontal(f);
+/// Small bordered row used for lists. `right` is a short fixed-width value; the left text truncates.
+fn mini(ui: &mut Ui, w: f32, left: impl FnOnce(&mut Ui), right: &str) {
+    Frame::new().fill(CARD).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(7).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+        ui.set_width(w - 22.0);
+        ui.horizontal(|ui| {
+            let right_w = 52.0;
+            ui.allocate_ui_with_layout(vec2((w - 22.0 - right_w - 6.0).max(20.0), 18.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                left(ui);
+            });
+            ui.allocate_ui_with_layout(vec2(right_w, 18.0), Layout::right_to_left(Align::Center), |ui| {
+                ui.label(mono(right.to_string()).size(11.5).color(DIM));
             });
         });
+    });
 }
 
 fn limit_row(ui: &mut Ui, glyph: &str, label: &str, value: String, frac: f32) {
@@ -62,12 +46,101 @@ fn limit_row(ui: &mut Ui, glyph: &str, label: &str, value: String, frac: f32) {
     });
 }
 
+/// (title, span) per dashboard card id; the order shown is `Model::dash_order`.
+const CARD_INFO: [(&str, Span); DASH_CARDS] = [
+    ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Quick controls", Span::Half),
+    ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half), ("Motion system", Span::Half),
+    ("Limits and tuning", Span::Half), ("Toolhead", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half),
+    ("Console", Span::Full), ("Print history", Span::Half), ("Recent events", Span::Half),
+];
+
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
     title(ui, "Dashboard", &format!("{} - live telemetry, mock data", m.name));
-    split(ui, m, 0.60, left, right);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(dim("Drag a card by its header to rearrange the dashboard. The layout is saved."));
+        if sbtn(ui, "Reset layout").clicked() { m.dash_order = default_dash_order(); save_dash_order(&m.dash_order); }
+    });
+    ui.add_space(6.0);
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("card_rects"), Vec::<(u8, egui::Rect)>::new()));
+    let order = m.dash_order.clone();
+    flow(ui, |f| {
+        for id in order {
+            f.card(CARD_INFO[id as usize].1, |ui| {
+                set_card(ui.ctx(), id);
+                match id {
+                    0 => p_status(ui, m, 0.0),
+                    1 => p_camera(ui, m, 0.0),
+                    2 => p_temps(ui, m, 0.0),
+                    3 => p_quick(ui, m, 0.0),
+                    4 => p_filament(ui, m, 0.0),
+                    5 => p_power(ui, m, 0.0),
+                    6 => p_fans(ui, m, 0.0),
+                    7 => p_motion(ui, m, 0.0),
+                    8 => p_limits(ui, m, 0.0),
+                    9 => p_toolhead(ui, m, 0.0),
+                    10 => p_mesh(ui, m, 0.0),
+                    11 => p_nodes(ui, m, 0.0),
+                    12 => p_console(ui, m, 520.0),
+                    13 => p_history(ui, m, 0.0),
+                    _ => p_events(ui, m, 0.0),
+                }
+            });
+        }
+    });
+    handle_drag(ui, m);
 }
 
-fn left(ui: &mut Ui, m: &mut Model) {
+/// Drop target for a card dragged to `p`: (target id, its rect, drop after it).
+fn drop_target(rects: &[(u8, egui::Rect)], src: u8, p: egui::Pos2) -> Option<(u8, egui::Rect, bool)> {
+    let best = rects.iter().filter(|(id, _)| *id != src).min_by(|a, b| {
+        let d = |r: &egui::Rect| { let c = r.clamp(p); (c - p).length() };
+        d(&a.1).partial_cmp(&d(&b.1)).unwrap()
+    })?;
+    let r = best.1;
+    let left = rects.iter().map(|(_, r)| r.left()).fold(f32::MAX, f32::min);
+    let right = rects.iter().map(|(_, r)| r.right()).fold(f32::MIN, f32::max);
+    let full_width = r.width() > (right - left) * 0.9;
+    let after = if full_width || p.y < r.top() || p.y > r.bottom() { p.y > r.center().y } else { p.x > r.center().x };
+    Some((best.0, r, after))
+}
+
+fn handle_drag(ui: &mut Ui, m: &mut Model) {
+    let ctx = ui.ctx().clone();
+    let rects: Vec<(u8, egui::Rect)> = ctx.data(|d| d.get_temp(egui::Id::new("card_rects"))).unwrap_or_default();
+    let drag: Option<u8> = ctx.data(|d| d.get_temp(egui::Id::new("dash_drag")));
+    let drop: Option<(u8, egui::Pos2)> = ctx.data_mut(|d| d.remove_temp(egui::Id::new("drag_drop")));
+    if let (Some(src), Some(p)) = (drag, ctx.input(|i| i.pointer.interact_pos())) {
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drag_overlay")));
+        if let Some((_, r, after)) = drop_target(&rects, src, p) {
+            painter.rect_stroke(r, 8.0, Stroke::new(2.0_f32, ACCENT_DIM), egui::StrokeKind::Outside);
+            let full = r.width() > ui.available_width() * 0.9;
+            let bar = if full {
+                let y = if after { r.bottom() + 4.0 } else { r.top() - 4.0 };
+                egui::Rect::from_min_max(egui::pos2(r.left(), y - 2.0), egui::pos2(r.right(), y + 2.0))
+            } else {
+                let x = if after { r.right() + 4.0 } else { r.left() - 4.0 };
+                egui::Rect::from_min_max(egui::pos2(x - 2.0, r.top()), egui::pos2(x + 2.0, r.bottom()))
+            };
+            painter.rect_filled(bar, 2.0, ACCENT);
+        }
+        let label = CARD_INFO[src as usize].0;
+        let box_r = egui::Rect::from_min_size(p + vec2(14.0, 10.0), vec2(150.0, 28.0));
+        painter.rect_filled(box_r, 7.0, Color32::from_rgb(18, 40, 58));
+        painter.rect_stroke(box_r, 7.0, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
+        painter.text(box_r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(13.0), WHITE);
+    }
+    if let Some((src, p)) = drop {
+        if let Some((tgt, _, after)) = drop_target(&rects, src, p) {
+            m.dash_order.retain(|x| *x != src);
+            if let Some(pos) = m.dash_order.iter().position(|x| *x == tgt) {
+                m.dash_order.insert(if after { pos + 1 } else { pos }, src);
+                save_dash_order(&m.dash_order);
+            }
+        }
+    }
+}
+
+fn p_status(ui: &mut Ui, m: &mut Model, h: f32) {
     let t = m.t as f32;
     let printing = m.state == MState::Printing;
     let vel = if printing { 180.0 * m.job.speed / 100.0 * (0.55 + 0.45 * (t * 0.9).sin().abs()) } else { 0.0 };
@@ -76,27 +149,36 @@ fn left(ui: &mut Ui, m: &mut Model) {
     let grams = m.job.progress * 312.0;
     let remaining = (m.job.total - m.job.elapsed).max(0.0);
     let now = 14.0 * 3600.0 + 32.0 * 60.0 + t;
-    let cur = m.fleet[m.active].clone();
     let busy = matches!(m.state, MState::Printing | MState::Paused);
-
-    // ---- printer status ----------------------------------------------------------------
-    panel(ui, "Printer status", |ui| {
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(vec2(200.0, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 8.0, m.state.status().color());
-                    ui.label(RichText::new(m.state.label().split(' ').next().unwrap_or("")).size(30.0).strong().color(WHITE));
-                });
-                ui.label(dim(if busy { m.job.file.clone() } else { "Ready for a new print".into() }));
-                if m.state == MState::Fault { ui.label(RichText::new("Fault latched - clear to continue").color(ERR).size(12.0)); }
+    panel_min(ui, "Printer status", h, |ui| {
+        let state_block = |ui: &mut Ui, m: &Model| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 8.0, m.state.status().color());
+                ui.label(RichText::new(m.state.label().split(' ').next().unwrap_or("")).size(30.0).strong().color(WHITE));
             });
+            ui.label(dim(if busy { m.job.file.clone() } else { "Ready for a new print".into() }));
+            if m.state == MState::Fault { ui.label(RichText::new("Fault latched - clear to continue").color(ERR).size(12.0)); }
+        };
+        let temps: Vec<f32> = m.heaters.iter().map(|h| h.cur).collect();
+        if ui.available_width() > 560.0 {
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(vec2(190.0, 0.0), Layout::top_down(Align::Min), |ui| state_block(ui, m));
+                let w = (ui.available_width() - 16.0) / 3.0;
+                stat_tile(ui, w, "thermo", &format!("{:.1} C", temps[0]), "Nozzle");
+                stat_tile(ui, w, "bed", &format!("{:.1} C", temps[1]), "Bed");
+                stat_tile(ui, w, "cube", &format!("{:.1} C", temps[2]), "Chamber");
+            });
+        } else {
+            state_block(ui, m);
+            ui.add_space(6.0);
             let w = (ui.available_width() - 16.0) / 3.0;
-            let h: Vec<(f32, f32)> = m.heaters.iter().map(|h| (h.cur, h.target)).collect();
-            stat_tile(ui, w, "thermo", &format!("{:.1} C", h[0].0), "Nozzle");
-            stat_tile(ui, w, "bed", &format!("{:.1} C", h[1].0), "Bed");
-            stat_tile(ui, w, "cube", &format!("{:.1} C", h[2].0), "Chamber");
-        });
+            ui.horizontal(|ui| {
+                stat_tile(ui, w, "thermo", &format!("{:.0} C", temps[0]), "Nozzle");
+                stat_tile(ui, w, "bed", &format!("{:.0} C", temps[1]), "Bed");
+                stat_tile(ui, w, "cube", &format!("{:.0} C", temps[2]), "Chamber");
+            });
+        }
         ui.add_space(10.0);
         if busy {
             accent_bar(ui, m.job.progress, ui.available_width());
@@ -112,17 +194,15 @@ fn left(ui: &mut Ui, m: &mut Model) {
             ("Velocity", format!("{:.0} mm/s", vel)),
             ("Acceleration", format!("{:.0} mm/s2", accel)),
             ("Flow rate", format!("{:.1} mm3/s", flow_rate)),
-        ], 128.0);
-        ui.add_space(10.0);
+        ], 120.0);
+        ui.add_space(6.0);
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 state_actions(ui, m);
                 ui.add_space(8.0);
                 ui.label(dim("Live Z offset"));
-                ui.horizontal(|ui| {
-                    let mut z = m.z_offset * 1000.0;
-                    if stepper(ui, &mut z, (-2000.0, 2000.0), 10.0, " um") { m.z_offset = z / 1000.0; }
-                });
+                let mut z = m.z_offset * 1000.0;
+                if stepper(ui, &mut z, (-2000.0, 2000.0), 10.0, " um") { m.z_offset = z / 1000.0; }
             });
             ui.add_space(12.0);
             let rot = t * m.job.speed / 100.0 * 4.0;
@@ -130,212 +210,56 @@ fn left(ui: &mut Ui, m: &mut Model) {
             dial(ui, &mut m.job.flow, (80.0, 120.0), "Flow", "drop", 0.0, "%");
         });
     });
+}
 
-    // ---- temperatures ---------------------------------------------------------------------
-    panel(ui, "Temperatures", |ui| {
-        plot(ui, 190.0, &[
+fn p_camera(ui: &mut Ui, m: &mut Model, h: f32) {
+    let t = m.t as f32;
+    let cur = m.fleet[m.active].clone();
+    panel_min(ui, "Camera", h, |ui| {
+        let w = ui.available_width();
+        cam_tile(ui, &cur, t, w, 0.0, false);
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            status(ui, Status::Ok, "No failure detected");
+            ui.label(dim("score 0.04"));
+        });
+        ui.horizontal(|ui| {
+            if button(ui, "Snapshot") { m.log(Sev::Info, "camera", "Snapshot saved"); }
+            if button(ui, "Open camera") { m.goto = Some(Page::Camera); }
+        });
+    });
+}
+
+fn p_temps(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Temperatures", h, |ui| {
+        plot(ui, 250.0, &[
             Series::from_ring("nozzle", ACCENT, &m.h_hot),
             Series::from_ring("target", G3, &m.h_t_hot).dashed(),
             Series::from_ring("bed", G1, &m.h_bed),
             Series::from_ring("chamber", G2, &m.h_cham),
         ], (0.0, HIST as f32), (0.0, 300.0), "deg C  -  last 60 s");
     });
-
-    // ---- filament | power ------------------------------------------------------------------
-    split(ui, m, 0.5, |ui, m| {
-        panel(ui, "Filament", |ui| {
-            let act = m.active;
-            let sp = m.loaded(act).first().map(|&i| m.fspools[i].clone());
-            match sp {
-                None => {
-                    ui.horizontal(|ui| { status(ui, Status::Warn, "No spool loaded"); });
-                    ui.label(dim("Assign a spool from Fleet or Spool Inventory."));
-                    ui.add_space(6.0);
-                    if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
-                }
-                Some(sp) => {
-                    ui.horizontal(|ui| { status(ui, Status::Ok, "Filament present"); ui.label(dim("T0 selected")); });
-                    ui.add_space(4.0);
-                    tiles_min(ui, &[
-                        ("Spool", crate::spools::code(sp.id)),
-                        ("Material", format!("{} {}", sp.mat, sp.color)),
-                        ("Remaining", format!("{:.0} g (~{:.0} m)", sp.left, crate::spools::length_m(&sp.mat, sp.dia, sp.left))),
-                        ("Nozzle", format!("{:.1} mm", m.fleet[act].nozzle)),
-                    ], 120.0);
-                    ui.add_space(4.0);
-                    accent_bar(ui, sp.left / sp.net.max(1.0), ui.available_width());
-                    ui.add_space(8.0);
-                    ui.horizontal_wrapped(|ui| {
-                        let ok = m.heaters[0].cur > 170.0;
-                        ui.add_enabled_ui(ok, |ui| {
-                            if button(ui, "Extrude") { m.pos[3] += m.st.extr_len; }
-                            if button(ui, "Retract") { m.pos[3] -= m.st.extr_len; }
-                        });
-                        if button(ui, "Load") { m.st.console.push("> LOAD_FILAMENT".into()); m.st.console.push("MMU: loading slot 1 ... ok".into()); }
-                        if button(ui, "Unload") { m.st.console.push("> UNLOAD_FILAMENT".into()); m.st.console.push("MMU: unloading ... ok".into()); }
-                    });
-                }
-            }
-        });
-    }, |ui, m| {
-        panel(ui, "Power and system", |ui| {
-            let t = m.t as f32;
-            let amps = m.drives.iter().map(|d| d.cur).sum::<f32>() * 0.9 + m.heaters.iter().map(|h| h.power / 100.0 * 4.0).sum::<f32>();
-            tiles_min(ui, &[
-                ("48 V bus", format!("{:.1} V", 48.0 + (t * 1.7).sin() * 0.12)),
-                ("Current", format!("{:.1} A", amps)),
-                ("Power", format!("{:.0} W", amps * 48.0)),
-                ("5 V rail", format!("{:.2} V", 5.0 + (t * 0.8).sin() * 0.01)),
-                ("MCU temps", format!("{:.0} / {:.0} / {:.0} C", 51.0 + (t * 0.1).sin() * 1.5, 47.0 + (t * 0.13).sin(), 44.0 + (t * 0.09).sin())),
-                ("CPU / memory", format!("{:.0} % / {:.0} %", 38.0 + (t * 0.7).sin() * 6.0, 54.0)),
-                ("API latency", format!("{:.0} ms", 11.0 + (t * 2.1).sin().abs() * 4.0)),
-                ("Link", "WiFi -52 dBm".into()),
-                ("Uptime", fmt_dur(m.t as f32 + 4360.0)),
-            ], 112.0);
-        });
-    });
-
-    // ---- limits & tuning --------------------------------------------------------------------
-    panel(ui, "Limits and tuning", |ui| {
-        ui.columns(2, |c| {
-            limit_row(&mut c[0], "gauge", "Velocity", format!("{:.0} mm/s", m.vmax), m.vmax / 1500.0);
-            limit_row(&mut c[0], "motion", "Accel X / Y / Z", format!("{:.0} / {:.0} / {:.0}", m.accel[0], m.accel[1], m.accel[2]), m.accel[0] / 20000.0);
-            limit_row(&mut c[0], "list", "Shapers X / Y", format!("{} {:.0} / {} {:.0} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq, SHAPERS[m.shapers[1].kind], m.shapers[1].freq), 0.5);
-            limit_row(&mut c[1], "hash", "Max jerk", format!("{:.0} mm/s3", m.jerk), m.jerk / 200000.0);
-            limit_row(&mut c[1], "drop", "Pressure advance", format!("{:.3} s", m.pa_value), m.pa_value / 0.2);
-            limit_row(&mut c[1], "grid", "Mesh", if m.mesh_adaptive { "adaptive".into() } else { "full".into() }, if m.mesh_adaptive { 0.45 } else { 1.0 });
-        });
-        if button(ui, "Open motion") { m.goto = Some(Page::Motion); }
-    });
-
-    // ---- console | history ----------------------------------------------------------------------
-    split(ui, m, 0.5, |ui, m| {
-        panel(ui, "Console", |ui| {
-            Frame::new().fill(INSET).corner_radius(7).inner_margin(Margin::same(8)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical().id_salt("dash_console").max_height(130.0).stick_to_bottom(true).auto_shrink([false, true]).show(ui, |ui| {
-                    for l in m.st.console.iter().rev().take(14).rev() {
-                        ui.label(mono(l.clone()).size(12.0).color(if l.starts_with('>') { WHITE } else { DIM }));
-                    }
-                });
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let r = ui.add(egui::TextEdit::singleline(&mut m.st.cmd).desired_width(ui.available_width() - 90.0).font(FontId::monospace(12.5)).hint_text("G28, M104 S250, STATUS"));
-                let go = (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || button(ui, "Send");
-                if go && !m.st.cmd.trim().is_empty() {
-                    let cmd = std::mem::take(&mut m.st.cmd);
-                    run_cmd(m, cmd.trim());
-                    r.request_focus();
-                }
-            });
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                if button(ui, "Home all") { run_cmd(m, "G28"); }
-                if button(ui, "Cool down") { for h in m.heaters.iter_mut() { h.target = 0.0; } }
-                if button(ui, "Auto-calibrate") { m.goto = Some(Page::Calibration); }
-            });
-        });
-    }, |ui, m| {
-        panel(ui, "Print history", |ui| {
-            let (now, cur) = (14.0 * 3600.0 + 32.0 * 60.0 + m.t as f32, m.fleet[m.active].clone());
-            let w = ui.available_width();
-            let mut rows: Vec<(String, Status, String, String)> = Vec::new();
-            if matches!(m.state, MState::Printing | MState::Paused) {
-                rows.push((m.job.file.trim_end_matches(".gcode").to_string(), Status::Ok, fmt_dur(m.job.elapsed), format!("ETA {}", clock(now + eta(&cur)))));
-            }
-            for (f, st, r, tm, d) in [
-                ("pa_calib_tower", Status::Ok, "complete", "00:18:04", "today 11:02"),
-                ("benchy_calib", Status::Ok, "complete", "01:02:40", "today 09:41"),
-                ("enclosure_panel", Status::Ok, "complete", "05:17:12", "yesterday"),
-                ("gear_train_x6", Status::Warn, "cancelled", "01:40:55", "yesterday"),
-                ("mmu_test_4color", Status::Err, "failed", "00:52:09", "2 days ago"),
-            ] {
-                rows.push((f.to_string(), st, format!("{}  {}", r, tm), d.to_string()));
-            }
-            for (f, st, mid, d) in rows {
-                mini(ui, w, |ui| {
-                    dot(ui, st);
-                    let short: String = f.chars().take(15).collect();
-                    ui.label(RichText::new(short).size(12.5));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| { ui.label(dim(d)); ui.label(mono(mid.split("  ").last().unwrap_or("").to_string()).size(11.5).color(DIM)); });
-                });
-                ui.add_space(4.0);
-            }
-        });
-    });
-
-    // ---- nodes | events -----------------------------------------------------------------------------
-    split(ui, m, 0.5, |ui, m| {
-        panel(ui, "Node health", |ui| {
-            let t = m.t as f32;
-            let gap = 6.0;
-            let w = (ui.available_width() - gap) / 2.0;
-            let names: Vec<(usize, &Node)> = m.nodes.iter().enumerate().collect();
-            for pair in names.chunks(2) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = gap;
-                    for (k, n) in pair {
-                        mini(ui, w, |ui| {
-                            status(ui, n.status, n.name);
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| { ui.label(mono(format!("{:.0} C", n.temp + (t * 0.2 + *k as f32).sin())).size(11.5).color(DIM)); });
-                        });
-                    }
-                });
-                ui.add_space(4.0);
-            }
-            ui.add_space(6.0);
-            if button(ui, "Open nodes") { m.goto = Some(Page::Nodes); }
-        });
-    }, |ui, m| {
-        panel(ui, "Recent events", |ui| {
-            let w = ui.available_width();
-            for l in m.logs.iter().rev().take(7) {
-                mini(ui, w, |ui| {
-                    let st = match l.sev { Sev::Info => Status::Idle, Sev::Warn => Status::Warn, Sev::Err => Status::Err };
-                    dot(ui, st);
-                    ui.label(mono(l.ts.clone()).size(11.0).color(FAINT));
-                    ui.add(egui::Label::new(RichText::new(l.msg.clone()).size(12.0)).truncate());
-                });
-                ui.add_space(4.0);
-            }
-            if button(ui, "Open event log") { m.goto = Some(Page::Logs); }
-        });
-    });
 }
 
-fn right(ui: &mut Ui, m: &mut Model) {
-    let t = m.t as f32;
-    let cur = m.fleet[m.active].clone();
-
-    panel(ui, "Camera", |ui| {
-        let w = ui.available_width();
-        cam_tile(ui, &cur, t, w, 0.0, false);
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            status(ui, Status::Ok, "No failure detected");
-            ui.label(dim("score 0.04"));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if button(ui, "Open") { m.goto = Some(Page::Camera); }
-                if button(ui, "Snapshot") { m.log(Sev::Info, "camera", "Snapshot saved"); }
-            });
-        });
-    });
-
-    panel(ui, "Quick controls", |ui| {
+fn p_quick(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Quick controls", h, |ui| {
         for (k, glyph) in ["thermo", "bed", "cube"].iter().enumerate() {
             row_card(ui, |ui| {
                 ui.horizontal(|ui| {
                     icon_box(ui, glyph);
                     ui.label(RichText::new(m.heaters[k].name).size(14.5).strong().color(WHITE));
-                    ui.add_space(10.0);
-                    ui.vertical(|ui| { ui.spacing_mut().item_spacing.y = 0.0; ui.label(dim("Current")); ui.label(mono(format!("{:.1} C", m.heaters[k].cur)).size(14.0).color(WHITE)); });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if button(ui, "OFF") { m.heaters[k].target = 0.0; }
-                        ui.add_space(4.0);
-                        let max = m.heaters[k].max;
-                        stepper(ui, &mut m.heaters[k].target, (0.0, max), 5.0, " C");
+                        ui.label(mono(format!("{:.1} C", m.heaters[k].cur)).size(16.0).color(WHITE));
+                        ui.label(dim("Current"));
                     });
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let max = m.heaters[k].max;
+                    stepper(ui, &mut m.heaters[k].target, (0.0, max), 5.0, " C");
+                    ui.add_space(4.0);
+                    if button(ui, "OFF") { m.heaters[k].target = 0.0; }
+                    ui.label(dim("Target"));
                 });
             });
         }
@@ -346,10 +270,65 @@ fn right(ui: &mut Ui, m: &mut Model) {
             }
         });
     });
+}
 
-    panel(ui, "Fans and outputs", |ui| {
+fn p_filament(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Filament", h, |ui| {
+        let act = m.active;
+        let sp = m.loaded(act).first().map(|&i| m.fspools[i].clone());
+        match sp {
+            None => {
+                status(ui, Status::Warn, "No spool loaded");
+                ui.label(dim("Assign a spool from Fleet or Spool Inventory."));
+                ui.add_space(6.0);
+                if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+            }
+            Some(sp) => {
+                ui.horizontal(|ui| { status(ui, Status::Ok, "Filament present"); ui.label(dim("T0 selected")); });
+                ui.add_space(4.0);
+                tiles_min(ui, &[
+                    ("Spool", crate::spools::code(sp.id)),
+                    ("Material", format!("{} {}", sp.mat, sp.color)),
+                    ("Remaining", format!("{:.0} g (~{:.0} m)", sp.left, crate::spools::length_m(&sp.mat, sp.dia, sp.left))),
+                    ("Nozzle", format!("{:.1} mm", m.fleet[act].nozzle)),
+                ], 104.0);
+                accent_bar(ui, sp.left / sp.net.max(1.0), ui.available_width());
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    let ok = m.heaters[0].cur > 170.0;
+                    if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
+                    if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
+                    if button(ui, "Load") { run_cmd(m, "LOAD_FILAMENT"); }
+                    if button(ui, "Unload") { run_cmd(m, "UNLOAD_FILAMENT"); }
+                });
+            }
+        }
+    });
+}
+
+fn p_power(ui: &mut Ui, m: &mut Model, h: f32) {
+    let t = m.t as f32;
+    let amps = m.drives.iter().map(|d| d.cur).sum::<f32>() * 0.9 + m.heaters.iter().map(|h| h.power / 100.0 * 4.0).sum::<f32>();
+    panel_min(ui, "Power and system", h, |ui| {
+        tiles_min(ui, &[
+            ("48 V bus", format!("{:.1} V", 48.0 + (t * 1.7).sin() * 0.12)),
+            ("Current", format!("{:.1} A", amps)),
+            ("Power", format!("{:.0} W", amps * 48.0)),
+            ("5 V rail", format!("{:.2} V", 5.0 + (t * 0.8).sin() * 0.01)),
+            ("MCU temps", format!("{:.0} / {:.0} / {:.0} C", 51.0 + (t * 0.1).sin() * 1.5, 47.0 + (t * 0.13).sin(), 44.0 + (t * 0.09).sin())),
+            ("CPU / memory", format!("{:.0} % / {:.0} %", 38.0 + (t * 0.7).sin() * 6.0, 54.0)),
+            ("API latency", format!("{:.0} ms", 11.0 + (t * 2.1).sin().abs() * 4.0)),
+            ("Link", "WiFi -52 dBm".into()),
+            ("Uptime", fmt_dur(m.t as f32 + 4360.0)),
+        ], 120.0);
+    });
+}
+
+fn p_fans(ui: &mut Ui, m: &mut Model, h: f32) {
+    let t = m.t as f32;
+    panel_min(ui, "Fans and outputs", h, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+            ui.spacing_mut().item_spacing = vec2(6.0, 8.0);
             for f in m.fans.iter_mut() {
                 let rot = t * f.pct / 100.0 * 12.0;
                 let short = f.name.replace(" fan", "").replace("Heatsink", "Hotend");
@@ -357,61 +336,212 @@ fn right(ui: &mut Ui, m: &mut Model) {
             }
             dial(ui, &mut m.st.led, (0.0, 100.0), "LED", "bulb", 0.0, "%");
         });
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         let door_ok = !m.nodes.iter().any(|n| n.class == "CHAMBER_IO" && n.status != Status::Ok);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             status(ui, if door_ok { Status::Ok } else { Status::Warn }, "Door");
-            ui.add_space(14.0);
+            ui.add_space(12.0);
             status(ui, Status::Ok, "Filter");
-            ui.add_space(14.0);
+            ui.add_space(12.0);
             status(ui, Status::Ok, "Enclosure");
         });
+        ui.add_space(4.0);
+        ui.label(dim("Drag a dial up or down. Shift for fine control."));
     });
+}
 
-    panel(ui, "Motion system", |ui| {
+fn p_motion(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Motion system", h, |ui| {
         for d in m.drives.iter() {
             row_card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_sized(vec2(34.0, 20.0), egui::Label::new(RichText::new(d.axis).size(15.0).strong().color(WHITE)));
-                    ui.add_sized(vec2(56.0, 20.0), egui::Label::new(mono(format!("{:.2} A", d.cur)).size(12.5)));
-                    ui.add_sized(vec2(62.0, 20.0), egui::Label::new(mono(format!("{:.1} um", d.follow)).size(12.5).color(DIM)));
-                    let w = (ui.available_width() - 64.0).max(30.0);
+                    ui.add_sized(vec2(32.0, 20.0), egui::Label::new(RichText::new(d.axis).size(15.0).strong().color(WHITE)));
+                    ui.add_sized(vec2(58.0, 20.0), egui::Label::new(mono(format!("{:.2} A", d.cur)).size(12.5)));
+                    ui.add_sized(vec2(66.0, 20.0), egui::Label::new(mono(format!("{:.1} um", d.follow)).size(12.5).color(DIM)));
+                    let w = (ui.available_width() - 50.0).max(24.0);
                     bar(ui, d.follow / 200.0, w, if d.follow > 150.0 { Some(Status::Warn) } else { None });
                     ui.label(mono(format!("{:.0} C", d.temp)).size(12.5).color(DIM));
                 });
             });
         }
     });
+}
 
-    panel(ui, "Toolhead", |ui| {
-        let tf = m.t as f32;
-        let vel = |s: f32| if m.state == MState::Printing { 180.0 * (0.55 + 0.45 * (s * 0.9).sin().abs()) } else { 0.0 };
+fn p_limits(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Limits and tuning", h, |ui| {
+        limit_row(ui, "gauge", "Velocity", format!("{:.0} mm/s", m.vmax), m.vmax / 1500.0);
+        limit_row(ui, "motion", "Accel X / Y / Z", format!("{:.0} / {:.0} / {:.0}", m.accel[0], m.accel[1], m.accel[2]), m.accel[0] / 20000.0);
+        limit_row(ui, "hash", "Max jerk", format!("{:.0} mm/s3", m.jerk), m.jerk / 200000.0);
+        limit_row(ui, "list", "Shapers X / Y", format!("{} {:.0} / {} {:.0} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq, SHAPERS[m.shapers[1].kind], m.shapers[1].freq), 0.5);
+        limit_row(ui, "drop", "Pressure advance", format!("{:.3} s", m.pa_value), m.pa_value / 0.2);
+        if button(ui, "Open motion") { m.goto = Some(Page::Motion); }
+    });
+}
+
+fn p_toolhead(ui: &mut Ui, m: &mut Model, h: f32) {
+    let tf = m.t as f32;
+    let vel = |s: f32| if m.state == MState::Printing { 180.0 * (0.55 + 0.45 * (s * 0.9).sin().abs()) } else { 0.0 };
+    panel_min(ui, "Toolhead", h, |ui| {
         tiles_min(ui, &[
             ("X", format!("{:.2}", m.pos[0])),
             ("Y", format!("{:.2}", m.pos[1])),
             ("Z", format!("{:.2}", m.pos[2])),
             ("E", format!("{:.1}", m.pos[3])),
-        ], 70.0);
-        ui.add_space(6.0);
+        ], 80.0);
         let pts: Vec<[f32; 2]> = (0..120).map(|k| [k as f32, vel(tf - (120 - k) as f32 * 0.25)]).collect();
-        plot(ui, 100.0, &[Series::new("velocity", ACCENT, pts)], (0.0, 120.0), (0.0, 260.0), "mm/s");
+        plot(ui, 110.0, &[Series::new("velocity", ACCENT, pts)], (0.0, 120.0), (0.0, 260.0), "mm/s");
         ui.add_space(6.0);
         tiles_min(ui, &[
             ("Homed", if m.home.iter().all(|h| *h) { "X Y Z".into() } else { "not all".into() }),
             ("Probe", format!("{:.1} C", 52.0 + (tf * 0.05).sin())),
             ("Z offset", format!("{:+.3} mm", m.z_offset)),
-        ], 90.0);
+        ], 100.0);
     });
+}
 
-    panel(ui, "Bed mesh", |ui| {
+fn p_mesh(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Bed mesh", h, |ui| {
         let (lo, hi) = m.mesh.iter().flatten().fold((9.0f32, -9.0f32), |a, v| (a.0.min(*v), a.1.max(*v)));
         let w = ui.available_width();
-        heatmap(ui, &m.mesh, vec2(w, w * 0.58), (lo, hi), None, (350.0, 350.0));
+        heatmap(ui, &m.mesh, vec2(w, (w * 0.62).min(360.0)), (lo, hi), None, (350.0, 350.0));
         ui.add_space(4.0);
         ramp_legend(ui, w, (lo, hi));
         ui.horizontal(|ui| {
+            if button(ui, "Open calibration") { m.st.tab = 1; m.goto = Some(Page::Calibration); }
             ui.label(dim("Hover for coordinates"));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| { if button(ui, "Open calibration") { m.st.tab = 1; m.goto = Some(Page::Calibration); } });
         });
+    });
+}
+
+fn p_nodes(ui: &mut Ui, m: &mut Model, h: f32) {
+    let t = m.t as f32;
+    panel_min(ui, "Node health", h, |ui| {
+        let gap = 6.0;
+        let avail = ui.available_width();
+        let n = (((avail + gap) / (190.0 + gap)).floor() as usize).clamp(1, 3);
+        let w = (avail - gap * (n as f32 - 1.0)) / n as f32;
+        let items: Vec<(usize, Status, &str, f32)> = m.nodes.iter().enumerate().map(|(k, nd)| (k, nd.status, nd.name, nd.temp + (t * 0.2 + k as f32).sin())).collect();
+        for row in items.chunks(n) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (_, st, name, temp) in row {
+                    let (st, name, temp) = (*st, *name, *temp);
+                    mini(ui, w, |ui| { dot(ui, st); ui.add(egui::Label::new(RichText::new(name).size(12.5)).truncate()); }, &format!("{:.0} C", temp));
+                }
+            });
+            ui.add_space(4.0);
+        }
+        if button(ui, "Open nodes") { m.goto = Some(Page::Nodes); }
+    });
+}
+
+fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Console", h, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for (i, n) in ["All", "Commands", "Warnings and errors"].iter().enumerate() {
+                if ui.selectable_label(m.st.con_filter == i, *n).clicked() { m.st.con_filter = i; }
+            }
+            ui.add_space(8.0);
+            for (txt, c) in [("G/M code", ACCENT), ("MACRO", MACRO), ("warning", WARN), ("error", ERR), ("ok", OK)] {
+                ui.label(RichText::new(txt).monospace().size(11.5).color(c));
+            }
+            if sbtn(ui, "Clear").clicked() { m.st.console.clear(); }
+            if sbtn(ui, "Copy").clicked() { ui.ctx().copy_text(m.st.console.join("\n")); }
+        });
+        ui.add_space(4.0);
+        Frame::new().fill(INSET).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_min_height((h - 190.0).max(260.0));
+            egui::ScrollArea::vertical().id_salt("dash_console").max_height((h - 190.0).max(260.0)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for l in m.st.console.iter() {
+                    let low = l.to_lowercase();
+                    let show = match m.st.con_filter { 1 => l.starts_with("> "), 2 => low.starts_with("warning") || low.starts_with("error") || l.starts_with("!!"), _ => true };
+                    if show { ui.add(egui::Label::new(console_job(l)).wrap_mode(egui::TextWrapMode::Wrap)); }
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(">").monospace().color(ACCENT).size(15.0));
+            let r = ui.add(egui::TextEdit::singleline(&mut m.st.cmd).desired_width((ui.available_width() - 96.0).max(60.0)).font(FontId::monospace(14.0)).hint_text("G28, M104 S250, G1 X100 Y100, LOAD_FILAMENT, HELP"));
+            if r.has_focus() {
+                let n = m.st.hist.len();
+                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && n > 0 { m.st.hist_idx = (m.st.hist_idx + 1).min(n); m.st.cmd = m.st.hist[n - m.st.hist_idx].clone(); }
+                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) && n > 0 {
+                    m.st.hist_idx = m.st.hist_idx.saturating_sub(1);
+                    m.st.cmd = if m.st.hist_idx == 0 { String::new() } else { m.st.hist[n - m.st.hist_idx].clone() };
+                }
+            }
+            let go = (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || primary(ui, "Send");
+            if go && !m.st.cmd.trim().is_empty() {
+                let cmd = std::mem::take(&mut m.st.cmd);
+                run_cmd(m, cmd.trim());
+                r.request_focus();
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(dim("Macros"));
+            for (lbl, c) in [("Home all", "G28"), ("Mesh", "G29"), ("Level", "G32"), ("Pause", "PAUSE"), ("Resume", "RESUME"), ("Shaper test", "SHAPER_CALIBRATE"), ("Help", "HELP")] {
+                if sbtn(ui, lbl).clicked() { run_cmd(m, c); }
+            }
+            if sbtn(ui, "Cool down").clicked() { for h in m.heaters.iter_mut() { h.target = 0.0; } m.st.console.push("> cool down (all heaters off)".into()); m.st.console.push("ok".into()); }
+        });
+    });
+}
+
+fn p_history(ui: &mut Ui, m: &mut Model, h: f32) {
+    let (now, cur) = (14.0 * 3600.0 + 32.0 * 60.0 + m.t as f32, m.fleet[m.active].clone());
+    panel_min(ui, "Print history", h, |ui| {
+        let w = ui.available_width();
+        let mut rows: Vec<(String, Status, String, String)> = Vec::new();
+        if matches!(m.state, MState::Printing | MState::Paused) {
+            rows.push((m.job.file.trim_end_matches(".gcode").to_string(), Status::Ok, fmt_dur(m.job.elapsed), format!("ETA {}", clock(now + eta(&cur)))));
+        }
+        for (f, st, tm, d) in [
+            ("pa_calib_tower", Status::Ok, "00:18:04", "today 11:02"),
+            ("benchy_calib", Status::Ok, "01:02:40", "today 09:41"),
+            ("enclosure_panel", Status::Ok, "05:17:12", "yesterday"),
+            ("gear_train_x6", Status::Warn, "01:40:55", "yesterday"),
+            ("mmu_test_4color", Status::Err, "00:52:09", "2 days ago"),
+            ("housing_set_v6", Status::Ok, "07:31:20", "3 days ago"),
+        ] {
+            rows.push((f.to_string(), st, tm.to_string(), d.to_string()));
+        }
+        for (f, st, tm, d) in rows {
+            Frame::new().fill(CARD).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(7).inner_margin(Margin::symmetric(10, 7)).show(ui, |ui| {
+                ui.set_width(w - 22.0);
+                ui.horizontal(|ui| {
+                    dot(ui, st);
+                    ui.label(RichText::new(f).size(12.5));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(mono(tm).size(11.5).color(DIM));
+                    ui.label(dim(d));
+                });
+            });
+            ui.add_space(4.0);
+        }
+    });
+}
+
+fn p_events(ui: &mut Ui, m: &mut Model, h: f32) {
+    panel_min(ui, "Recent events", h, |ui| {
+        let w = ui.available_width();
+        for l in m.logs.iter().rev().take(7) {
+            Frame::new().fill(CARD).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(7).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
+                ui.set_width(w - 22.0);
+                ui.horizontal(|ui| {
+                    let st = match l.sev { Sev::Info => Status::Idle, Sev::Warn => Status::Warn, Sev::Err => Status::Err };
+                    dot(ui, st);
+                    ui.label(mono(l.ts.clone()).size(11.0).color(FAINT));
+                    ui.label(dim(l.src.clone()));
+                });
+                ui.add(egui::Label::new(RichText::new(l.msg.clone()).size(12.0)).wrap());
+            });
+            ui.add_space(4.0);
+        }
+        if button(ui, "Open event log") { m.goto = Some(Page::Logs); }
     });
 }

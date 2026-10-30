@@ -84,8 +84,7 @@ use Page as P;
 
 pub const STEPS: &[Step] = &[
     s(P::Dashboard, None, None, "", "Welcome to MACH5 Control", "This tour walks through every major area of the Management Interface. Everything you see is mock data driving a simulated farm of 10 machines. Use the Right and Left arrow keys or the buttons below. Esc leaves the tour at any time.", None, true),
-    s(P::Dashboard, None, None, "nav", "Navigation", "Pages are grouped by what you are doing: Machine (run it), Tuning (make it print well), Materials, Hardware (the CAN FD bus and nodes) and System (fleet, config, rules, API). A square next to a page marks something that needs attention.", None, true),
-    s(P::Dashboard, None, None, "navtoggle", "Closable sidebar", "Close the bar for more room with this button or Ctrl+B. The current page always stays named in the title bar.", None, true),
+    s(P::Dashboard, None, None, "nav", "Navigation", "Pages are grouped by what you are doing: Machine (run it), Tuning (make it print well), Materials, Hardware (the CAN FD bus and nodes) and System (fleet, config, rules, API). A marker next to a page needs attention. On narrow windows the bar shrinks to icons; hover one for its name.", None, true),
     s(P::Dashboard, None, None, "switcher", "Machine switcher", "Every page shows one machine at a time. This list shows every machine in the farm with its live state. Watch: the tour switches to Tomahawk-05 and the name, job and temperatures change everywhere, then it switches back.", Some(Demo::SwitchMachine), true),
     s(P::Dashboard, None, None, "estop", "E-STOP", "Latches a fault: heaters off, drives disabled. Safety is enforced on the STM32 and on the nodes themselves, so it holds even if the main controller or the network fails. A latched fault clears only by an explicit Host command.", None, true),
     s(P::Dashboard, None, None, "Job", "Dashboard: job", "Live job progress, layers, elapsed and remaining time. Pause, Resume and Cancel act on the machine; Speed and Flow scale the running print. Time runs 30x faster than real time in this prototype.", None, true),
@@ -312,10 +311,10 @@ impl Tour {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(step_no > 0, |ui| {
-                        if ui.button("Back").clicked() { action = 2; }
+                        if crate::ui::button(ui, "Back") { action = 2; }
                     });
                     if crate::ui::primary(ui, if last { "Finish" } else { "Next" }) { action = 1; }
-                    if ui.button("Skip tour").clicked() { action = 3; }
+                    if crate::ui::button(ui, "Skip tour") { action = 3; }
                     ui.label(dim("<- ->  Esc"));
                 });
             });

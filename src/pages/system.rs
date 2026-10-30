@@ -80,8 +80,8 @@ const TRIGGERS: [&str; 5] = ["Job start", "Sensor event", "Material change", "Sp
 
 pub fn rules(ui: &mut Ui, m: &mut Model) {
     title(ui, "Rules", "Sandboxed rules engine for user logic. Triggers and macros replace shell-command macros");
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Rules", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Rules", |ui| {
             egui::Grid::new("rules").num_columns(4).striped(true).spacing([14.0, 6.0]).show(ui, |ui| {
                 for h in ["On", "Name", "Trigger", "Runs"] { th(ui, h); }
                 ui.end_row();
@@ -100,7 +100,7 @@ pub fn rules(ui: &mut Ui, m: &mut Model) {
             }
         });
         let k = m.st.sel_rule.min(m.rules.len() - 1);
-        panel(&mut c[1], "Editor", |ui| {
+        panel(c.at(1), "Editor", |ui| {
             let r = &mut m.rules[k];
             egui::Grid::new("rule_ed").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
                 ui.label(dim("Trigger"));
@@ -211,8 +211,8 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
             });
         }
         2 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "Signing and provisioning", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "Signing and provisioning", |ui| {
                     kv(ui, "keys", &[
                         ("Release signing key", "MACH5-REL-02 (ed25519)".into()),
                         ("Previous key", "MACH5-REL-01 - accepted until 2027-01-01".into()),
@@ -222,7 +222,7 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
                     ui.add_space(4.0);
                     ui.label(dim("Key provisioning and rotation procedure is an open decision."));
                 });
-                panel(&mut c[1], "Clients due for rotation", |ui| {
+                panel(c.at(1), "Clients due for rotation", |ui| {
                     for cl in m.clients.iter().filter(|c| !c.revoked && c.age > 80) {
                         ui.horizontal(|ui| { dot(ui, Status::Warn); ui.label(cl.name); ui.label(dim(format!("{} d", cl.age))); });
                     }
@@ -230,8 +230,8 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
             });
         }
         _ => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "On-machine screen (DSI) - mirrored through the API", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "On-machine screen (DSI) - mirrored through the API", |ui| {
                     let w = ui.available_width().min(560.0);
                     let (r, _) = ui.allocate_exact_size(vec2(w, w * 0.6), Sense::hover());
                     let p = ui.painter_at(r);
@@ -246,7 +246,7 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
                         p.text(r.left_top() + vec2(12.0 + i as f32 * 150.0, 96.0), Align2::LEFT_TOP, format!("{} {:.0}/{:.0}", h.name, h.cur, h.target), FontId::monospace(11.0), DIM);
                     }
                 });
-                panel(&mut c[1], "Other views", |ui| {
+                panel(c.at(1), "Other views", |ui| {
                     for (n, d) in [("Phone / tablet", "Ports of the Management Interface, paired with per-client keys"), ("Timelapse", "View of camera frames captured per job"), ("Remote screen", "Mirror of the on-machine DSI UI")] {
                         ui.label(RichText::new(n).color(WHITE));
                         ui.label(dim(d));
@@ -260,8 +260,8 @@ pub fn api(ui: &mut Ui, m: &mut Model) {
 
 pub fn simulator(ui: &mut Ui, m: &mut Model) {
     title(ui, "Simulator", "Host tooling: planner and a virtual CAN bus on the PC, so firmware is tested before hardware exists");
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Planner run", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Planner run", |ui| {
             egui::Grid::new("sim_cfg").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("G-code"));
                 ui.label(mono(m.files[m.st.sel_file].name));
@@ -279,7 +279,7 @@ pub fn simulator(ui: &mut Ui, m: &mut Model) {
                 if m.sim.running { bar(ui, m.sim.prog, 120.0, None); }
             });
         });
-        panel(&mut c[1], "Fault injection", |ui| {
+        panel(c.at(1), "Fault injection", |ui| {
             for (k, (n, e)) in [("Heater loss", "node cuts heater; Host reports fault"), ("CAN drop (segment A)", "controlled stop on missing time sync"), ("Power loss", "checkpoint written; resume available"), ("Drive over-current", "drive disables; fault latched")].iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut m.sim.faults[k], *n);
@@ -325,23 +325,23 @@ pub fn logs(ui: &mut Ui, m: &mut Model) {
         button(ui, "Export");
     });
     ui.add_space(6.0);
-    panel(ui, "", |ui| {
-        egui::Grid::new("logs").num_columns(4).striped(true).spacing([18.0, 4.0]).show(ui, |ui| {
-            for h in ["Time", "Level", "Source", "Message"] { th(ui, h); }
-            ui.end_row();
-            let q = m.st.log_q.to_lowercase();
-            for l in m.logs.iter().rev() {
-                let ok = match m.st.log_filter { 1 => l.sev == Sev::Info, 2 => l.sev == Sev::Warn, 3 => l.sev == Sev::Err, _ => true };
-                if !ok || (!q.is_empty() && !l.msg.to_lowercase().contains(&q) && !l.src.to_lowercase().contains(&q)) { continue; }
-                ui.label(mono(l.ts.clone()).color(FAINT));
-                match l.sev { Sev::Info => status(ui, Status::Idle, "info"), Sev::Warn => status(ui, Status::Warn, "warn"), Sev::Err => status(ui, Status::Err, "error") }
-                ui.label(dim(l.src.clone()));
-                ui.label(l.msg.clone());
-                ui.end_row();
-            }
-        });
+    panel(ui, "Events", |ui| {
+        let q = m.st.log_q.to_lowercase();
+        for l in m.logs.iter().rev() {
+            let ok = match m.st.log_filter { 1 => l.sev == Sev::Info, 2 => l.sev == Sev::Warn, 3 => l.sev == Sev::Err, _ => true };
+            if !ok || (!q.is_empty() && !l.msg.to_lowercase().contains(&q) && !l.src.to_lowercase().contains(&q)) { continue; }
+            row_card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    match l.sev { Sev::Info => dot(ui, Status::Idle), Sev::Warn => dot(ui, Status::Warn), Sev::Err => dot(ui, Status::Err) }
+                    ui.label(mono(l.ts.clone()).size(11.5).color(FAINT));
+                    ui.label(dim(l.src.clone()));
+                });
+                ui.add(egui::Label::new(RichText::new(l.msg.clone()).size(13.0)).wrap());
+            });
+        }
     });
 }
+
 
 const FEATURES: [(&str, &str, &str, Page); 12] = [
     ("Resonance testing and auto input-shaper", "Shake&Tune, Klippain", "P4 with ADXL data from CAN nodes; per-axis results applied automatically", Page::Calibration),
@@ -363,10 +363,7 @@ pub fn spec(ui: &mut Ui, m: &mut Model) {
     tabs(ui, &mut m.st.tab, &["Roadmap", "Feature coverage", "Principles", "Architecture", "Open decisions"]);
     match m.st.tab {
         0 => panel(ui, "Roadmap - each phase ends in a gate that must pass before the next starts", |ui| {
-            egui::Grid::new("road").num_columns(4).striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
-                for h in ["Phase", "Work", "Exit gate", "Status"] { th(ui, h); }
-                ui.end_row();
-                let rows = [
+        let rows = [
                     ("0. Spec freeze", "Requirements doc, CAN FD protocol spec, config schema, API schema, node classes, safety case", "Review sign-off; every feature has an owner and an interface"),
                     ("1. Simulator and core", "Shared crates, planner, G-code, virtual CAN bus, desktop app skeleton", "Planner output matches a reference Klipper run within tolerance"),
                     ("2. Bus bring-up", "CAN FD dev boards, bootloader, discovery, time sync, update and rollback", "Two segments at target bitrate, error-free multi-hour soak while streaming and flashing"),
@@ -376,13 +373,17 @@ pub fn spec(ui: &mut Ui, m: &mut Model) {
                     ("6. Fleet", "Management Interface farm features, signed OTA, desktop release", "10+ machines managed from one app with staged roll-out"),
                     ("7. Step-servo CAN mode (v2)", "Drop STEP/DIR from the harness", "Jitter and latency below the hardwired baseline"),
                 ];
-                for (i, (p, w, g)) in rows.iter().enumerate() {
-                    ui.label(mono(*p).color(WHITE)); wrap(ui, 300.0, dim(*w)); wrap(ui, 320.0, *g);
+        for (i, (p, w, g)) in rows.iter().enumerate() {
+            row_card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(*p).strong().size(13.5).color(WHITE));
                     let (st, tx) = if i < m.phases_done { (Status::Ok, "gate passed") } else if i == m.phases_done { (Status::Warn, "in progress") } else { (Status::Off, "not started") };
                     status(ui, st, tx);
-                    ui.end_row();
-                }
+                });
+                ui.add(egui::Label::new(dim(*w)).wrap());
+                ui.add(egui::Label::new(RichText::new(format!("Gate: {}", g)).size(12.5)).wrap());
             });
+        }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if button(ui, "Mark current gate passed") && m.phases_done < 8 { m.phases_done += 1; }
@@ -391,23 +392,21 @@ pub fn spec(ui: &mut Ui, m: &mut Model) {
             ui.label(dim("Build a Klipper compatibility shim only if migrating the existing fleet requires it."));
         }),
         1 => panel(ui, "Native feature set - each is a first-class function with config schema, API endpoints and UI panel", |ui| {
-            egui::Grid::new("feat").num_columns(4).striped(true).spacing([18.0, 7.0]).show(ui, |ui| {
-                for h in ["Feature", "Community origin", "MACH5 native design", "Panel"] { th(ui, h); }
-                ui.end_row();
-                for (f, o, d, p) in FEATURES.iter() {
-                    wrap(ui, 240.0, mono(*f)); wrap(ui, 150.0, dim(*o)); wrap(ui, 420.0, *d);
-                    if crate::ui::sbtn(ui, p.title()).clicked() { m.goto = Some(*p); }
-                    ui.end_row();
-                }
-            });
+            for (f, o, d, p) in FEATURES.iter() {
+                row_card(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(*f).strong().size(13.5).color(WHITE));
+                        ui.label(dim(format!("from {}", o)));
+                    });
+                    ui.add(egui::Label::new(RichText::new(*d).size(12.5)).wrap());
+                    if sbtn(ui, &format!("Open {}", p.title())).clicked() { m.goto = Some(*p); }
+                });
+            }
             ui.add_space(4.0);
             ui.label(dim("Timelapse, remote screens and mobile control are views of the same API, not plugins."));
         }),
         2 => panel(ui, "Design principles", |ui| {
-            egui::Grid::new("prin").num_columns(3).striped(true).spacing([18.0, 7.0]).show(ui, |ui| {
-                for h in ["Area", "Carried over", "Proposed change"] { th(ui, h); }
-                ui.end_row();
-                for (a, c, p) in [
+            for (a, c, p) in [
                     ("Compute", "Host ESP32-P4, Motion Bridge STM32, Network Bridge ESP32-S3; no SBC", "None. Keep plain, definitive names"),
                     ("Language", "Rust wherever possible", "Shared no_std crates for protocol, units and config schema across all chips and the desktop app"),
                     ("Motion", "Third-order jerk-limited planner, no junction deviation, closed-loop/FOC default", "Input shaping and pressure advance inside the planner"),
@@ -417,20 +416,18 @@ pub fn spec(ui: &mut Ui, m: &mut Model) {
                     ("Extensibility", "No plugin system; features native", "Sandboxed rules engine for user logic"),
                     ("Management", "Native desktop app; machine serves API only", "Signed API schema from the same Rust types as firmware"),
                     ("Updates", "Network flash via SD, per-chip, by config", "Dual-bank images with rollback on every MCU"),
-                ] {
-                    ui.label(mono(a)); wrap(ui, 380.0, dim(c)); wrap(ui, 380.0, p);
-                    ui.end_row();
-                }
-            });
+            ] {
+                info_card(ui, a, &[("Carried over", c.to_string()), ("Proposed", p.to_string())]);
+            }
         }),
         3 => {
-            ui.columns(2, |c| {
-                panel(&mut c[0], "System architecture", |ui| {
+            adaptive(ui, 2, |c| {
+                panel(c.at(0), "System architecture", |ui| {
                     ui.label(mono("Management Interface (desktop; phone/tablet ports)\n   | HTTPS/WebSocket API (signed schema)\n+--+----------------- MAINBOARD -----------------+\n| Network Bridge ESP32-S3: WiFi/Ethernet, API,   |\n|   OTA, SD files                                |\n|   | SPI                                        |\n| Host ESP32-P4: G-code, planner, shaper,        |\n|   thermal, leveling, state machine, DSI screen |\n|   | SPI/shared                                 |\n| Motion Bridge STM32: step generation, hard     |\n|   safety, heater watchdog, ADC                 |\n+--------+---------------------+-----------------+\n         | CAN FD A (drive)    | CAN FD B (periph.)\n   FOC drivers X/Y/Z/E     Eddy probe, toolhead,\n   (STEP/DIR/EN + CAN)     chamber, AMS/MMU, filament\n                           sensors, ADXL, camera, light"));
                     ui.add_space(4.0);
                     ui.label(dim("The P4 owns all decisions and the STM32 owns all deadlines."));
                 });
-                panel(&mut c[1], "Software stack (one Rust workspace)", |ui| {
+                panel(c.at(1), "Software stack (one Rust workspace)", |ui| {
                     for (i, t) in [
                         "Shared crates (no_std): CAN FD protocol, node identity, typed config schema, units, motion math",
                         "Motion Bridge firmware: step generation, hard safety, ADC, heater watchdog",

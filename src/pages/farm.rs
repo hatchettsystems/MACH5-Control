@@ -81,14 +81,14 @@ fn overview(ui: &mut Ui, m: &mut Model) {
         let sel: Vec<usize> = (0..m.fleet.len()).filter(|i| m.fleet[*i].sel).collect();
         ui.horizontal_wrapped(|ui| {
             ui.label(dim(format!("{} selected", sel.len())));
-            ui.add_enabled_ui(!sel.is_empty(), |ui| {
+            if sel.is_empty() { ui.disable(); }
+            {
                 if button(ui, "Pause") { for i in &sel { m.m_pause(*i); } m.log(Sev::Info, "farm", &format!("Pause sent to {} machine(s)", sel.len())); }
                 if button(ui, "Resume") { for i in &sel { m.m_resume(*i); } m.log(Sev::Info, "farm", &format!("Resume sent to {} machine(s)", sel.len())); }
                 if button(ui, "Cancel job") { for i in &sel { m.m_cancel(*i); } m.log(Sev::Warn, "farm", &format!("Cancel sent to {} machine(s)", sel.len())); }
                 if button(ui, "Cool down") { for i in &sel { m.m_cool(*i); } }
                 if button(ui, "Clear faults") { for i in &sel { m.m_clear(*i); } }
-                ui.separator();
-                egui::ComboBox::from_id_salt("send_file").width(190.0).selected_text(JOBS[m.st.send_file].0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("send_file").width(170.0).selected_text(JOBS[m.st.send_file].0).show_ui(ui, |ui| {
                     for (k, j) in JOBS.iter().enumerate() { ui.selectable_value(&mut m.st.send_file, k, j.0); }
                 });
                 if primary(ui, "Send job to idle") {
@@ -96,48 +96,51 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                     for i in &sel { if m.fleet[*i].state == MState::Idle { m.m_start(*i, m.st.send_file); n += 1; } }
                     m.log(Sev::Info, "farm", &format!("Job {} started on {} idle machine(s)", JOBS[m.st.send_file].0, n));
                 }
-                ui.separator();
                 egui::ComboBox::from_id_salt("set_group").width(100.0).selected_text(GROUPS[m.st.set_group]).show_ui(ui, |ui| {
                     for (k, g) in GROUPS.iter().enumerate() { ui.selectable_value(&mut m.st.set_group, k, *g); }
                 });
                 if button(ui, "Set group") { for i in &sel { m.fleet[*i].group = m.st.set_group; } }
-            });
+            }
         });
     });
 
     panel(ui, "Machines (live)", |ui| {
+        let idxs: Vec<usize> = (0..m.fleet.len()).filter(|i| in_group(m, *i)).collect();
+        let spools: Vec<String> = idxs.iter().map(|&i| m.loaded(i).iter().take(3).map(|&si| format!("{} {:.0} g", m.fspools[si].mat, m.fspools[si].left)).collect::<Vec<_>>().join("   ")).collect();
         let mut acts: Vec<(usize, u8)> = Vec::new();
-        let act = m.active;
-        egui::ScrollArea::horizontal().id_salt("fleet_tbl_scroll").auto_shrink([false, true]).show(ui, |ui| {
-        egui::Grid::new("fleet_tbl").num_columns(11).striped(true).spacing([10.0, 6.0]).show(ui, |ui| {
-            ui.label("");
-            for h in ["Name", "Group", "State", "Job", "Progress", "ETA", "Hotend / bed", "FW", "Health", ""] { th(ui, h); }
-            ui.end_row();
-            for i in 0..m.fleet.len() {
-                if !in_group(m, i) { continue; }
-                let f = &mut m.fleet[i];
-                ui.checkbox(&mut f.sel, "");
-                if ui.selectable_label(m.st.sel_fleet == i, if i == act { format!("{} *", f.name) } else { f.name.clone() }).clicked() { acts.push((i, 0)); }
-                ui.label(dim(GROUPS[f.group]));
-                status(ui, f.state.status(), f.state.label());
-                wrap(ui, 130.0, mono(short(&f.file)));
-                ui.horizontal(|ui| { bar(ui, f.prog, 56.0, None); ui.label(mono(format!("{:3.0}%", f.prog * 100.0))); });
-                ui.label(mono(if f.state == MState::Printing { fmt_dur(eta(f)) } else { "-".into() }));
-                ui.label(mono(format!("{:.0}/{:.0}  {:.0}/{:.0}", f.temps[0], f.targets[0], f.temps[1], f.targets[1])));
-                ui.label(mono(f.fw.clone()).color(if f.fw == TARGET_FW { WHITE } else { TEXT }));
-                status(ui, f.health, &if f.nodes.0 < f.nodes.1 { format!("{}/{} nodes", f.nodes.0, f.nodes.1) } else { f.health.label().to_string() });
+        let (act, selected) = (m.active, m.st.sel_fleet);
+        card_grid(ui, idxs.len(), 270.0, |ui, n, w| {
+            let i = idxs[n];
+            let f = &mut m.fleet[i];
+            card_frame(ui, w, selected == i, |ui| {
                 ui.horizontal(|ui| {
-                    if crate::ui::sbtn(ui, "open").clicked() { acts.push((i, 1)); }
+                    ui.checkbox(&mut f.sel, "");
+                    if ui.selectable_label(selected == i, RichText::new(if i == act { format!("{} *", f.name) } else { f.name.clone() }).strong().size(14.0)).clicked() { acts.push((i, 0)); }
+                });
+                status(ui, f.state.status(), f.state.label());
+                ui.label(dim(format!("{}  -  {}  -  fw {}", GROUPS[f.group], f.model, f.fw)));
+                ui.add_space(6.0);
+                ui.label(mono(if f.file.is_empty() { "No job".to_string() } else { short(&f.file) }).size(12.5).color(if f.file.is_empty() { DIM } else { WHITE }));
+                accent_bar(ui, f.prog, ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(mono(format!("{:.0} %", f.prog * 100.0)).size(12.0));
+                    if f.state == MState::Printing { ui.label(dim(format!("ETA {}", fmt_dur(eta(f))))); }
+                });
+                ui.add_space(4.0);
+                ui.label(mono(format!("Nozzle {:.0}/{:.0}   Bed {:.0}/{:.0}", f.temps[0], f.targets[0], f.temps[1], f.targets[1])).size(11.5).color(DIM));
+                ui.label(dim(if spools[n].is_empty() { "No spool loaded".to_string() } else { spools[n].clone() }).size(11.5));
+                if f.health != Status::Ok || f.nodes.0 < f.nodes.1 { status(ui, f.health, &format!("{}/{} nodes", f.nodes.0, f.nodes.1)); }
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if sbtn(ui, "Open").clicked() { acts.push((i, 1)); }
                     match f.state {
-                        MState::Printing => { if crate::ui::sbtn(ui, "pause").clicked() { acts.push((i, 2)); } }
-                        MState::Paused => { if crate::ui::sbtn(ui, "resume").clicked() { acts.push((i, 3)); } }
-                        MState::Fault => { if crate::ui::sbtn(ui, "clear").clicked() { acts.push((i, 4)); } }
+                        MState::Printing => { if sbtn(ui, "Pause").clicked() { acts.push((i, 2)); } }
+                        MState::Paused => { if sbtn(ui, "Resume").clicked() { acts.push((i, 3)); } }
+                        MState::Fault => { if sbtn(ui, "Clear fault").clicked() { acts.push((i, 4)); } }
                         _ => {}
                     }
                 });
-                ui.end_row();
-            }
-        });
+            });
         });
         for (i, a) in acts {
             match a {
@@ -153,8 +156,8 @@ fn overview(ui: &mut Ui, m: &mut Model) {
 
     let k = m.st.sel_fleet.min(m.fleet.len() - 1);
     let mut acts: Vec<(u8, u8, u32)> = Vec::new(); // (kind, slot, spool)
-    ui.columns(3, |c| {
-        panel(&mut c[0], &format!("{} - settings", m.fleet[k].name), |ui| {
+    adaptive(ui, 3, |c| {
+        panel(c.at(0), &format!("{} - settings", m.fleet[k].name), |ui| {
             let (old_slots, old_name) = (m.fleet[k].slots, m.fleet[k].name.clone());
             egui::Grid::new("fm_edit").num_columns(2).spacing([14.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("Name"));
@@ -214,7 +217,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
                 if !can_rm { ui.label(dim("Select another machine and stop its print to remove it.")); }
             }
         });
-        panel(&mut c[1], &format!("{} - loaded spools", m.fleet[k].name), |ui| {
+        panel(c.at(1), &format!("{} - loaded spools", m.fleet[k].name), |ui| {
             egui::Grid::new("fm_spools").num_columns(3).spacing([12.0, 7.0]).show(ui, |ui| {
                 for slot in 0..m.fleet[k].slots {
                     ui.label(mono(format!("T{}", slot)).color(DIM));
@@ -247,7 +250,7 @@ fn overview(ui: &mut Ui, m: &mut Model) {
             ui.add_space(4.0);
             if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
         });
-        panel(&mut c[2], &format!("{} - history", m.fleet[k].name), |ui| {
+        panel(c.at(2), &format!("{} - history", m.fleet[k].name), |ui| {
             let f = &m.fleet[k];
             kv(ui, "fm_hist", &[
                 ("Jobs completed", f.jobs_done.to_string()),
@@ -327,8 +330,8 @@ fn blocker(m: &Model, q: &QJob) -> String {
 }
 
 fn queue(ui: &mut Ui, m: &mut Model) {
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Add job to farm queue", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Add job to farm queue", |ui| {
             egui::Grid::new("q_add").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                 ui.label(dim("File"));
                 egui::ComboBox::from_id_salt("q_file").width(220.0).selected_text(JOBS[m.st.q_file].0).show_ui(ui, |ui| {
@@ -361,7 +364,7 @@ fn queue(ui: &mut Ui, m: &mut Model) {
                 m.log(Sev::Info, "farm", &format!("Queued #{} {} x{}", id, file, m.st.q_copies));
             }
         });
-        panel(&mut c[1], "Dispatcher", |ui| {
+        panel(c.at(1), "Dispatcher", |ui| {
             ui.checkbox(&mut m.auto_dispatch, "Auto-dispatch queued jobs to idle machines (off by default; not dev benches)");
             ui.label(dim("Highest priority first, then oldest. A machine with a fault is skipped."));
             ui.add_space(4.0);
@@ -372,30 +375,27 @@ fn queue(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Queue", |ui| {
         if m.queue.is_empty() { ui.label(dim("Queue empty.")); }
         let mut act: Option<(usize, u8)> = None;
-        egui::Grid::new("q_tbl").num_columns(9).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
-            for h in ["#", "File", "Needs", "Est.", "Left", "Priority", "Machine", "Status", ""] { th(ui, h); }
-            ui.end_row();
-            for (k, q) in m.queue.iter().enumerate() {
-                ui.label(mono(q.id.to_string()));
-                ui.label(mono(q.file));
-                ui.label(mono(format!("{} {:.0} g", q.material, JOBS.iter().find(|j| j.0 == q.file).map(|j| j.3).unwrap_or(0.0))));
-                ui.label(mono(format!("{}h{:02}", q.mins / 60, q.mins % 60)));
-                ui.label(mono(q.left.to_string()));
-                ui.label(["low", "normal", "high"][q.prio]);
-                ui.label(dim(q.target.and_then(|t| m.fleet.get(t)).map(|f| f.name.clone()).unwrap_or("any idle".into())));
-                match q.running.and_then(|r| m.fleet.get(r)) {
-                    Some(f) => ui.horizontal(|ui| { status(ui, Status::Ok, &format!("running on {}", f.name)); bar(ui, f.prog, 50.0, None); }).response,
-                    None => { let b = blocker(m, q); ui.label(if b.starts_with("no ") { RichText::new(b).color(WARN) } else { dim(b) }) }
-                };
-                ui.horizontal(|ui| {
-                    if crate::ui::sbtn(ui, "up").clicked() { act = Some((k, 0)); }
-                    if crate::ui::sbtn(ui, "down").clicked() { act = Some((k, 1)); }
-                    if crate::ui::sbtn(ui, "prio+").clicked() { act = Some((k, 2)); }
-                    if crate::ui::sbtn(ui, "remove").clicked() { act = Some((k, 3)); }
+        for (k, q) in m.queue.iter().enumerate() {
+            let grams = JOBS.iter().find(|j| j.0 == q.file).map(|j| j.3).unwrap_or(0.0);
+            row_card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(mono(format!("#{}", q.id)).color(DIM));
+                    ui.label(RichText::new(q.file).strong().size(13.5).color(WHITE));
+                    match q.running.and_then(|r| m.fleet.get(r)) {
+                        Some(f) => { status(ui, Status::Ok, &format!("running on {}  {:.0}%", f.name, f.prog * 100.0)); }
+                        None => { let b = blocker(m, q); if b.starts_with("no ") { status(ui, Status::Warn, &b); } else { ui.label(dim(b)); } }
+                    }
                 });
-                ui.end_row();
-            }
-        });
+                ui.label(dim(format!("Needs {} {:.0} g  -  est. {}h{:02}  -  {} left  -  priority {}  -  {}", q.material, grams, q.mins / 60, q.mins % 60, q.left, ["low", "normal", "high"][q.prio], q.target.and_then(|t| m.fleet.get(t)).map(|f| f.name.clone()).unwrap_or("any idle machine".into()))));
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if sbtn(ui, "Up").clicked() { act = Some((k, 0)); }
+                    if sbtn(ui, "Down").clicked() { act = Some((k, 1)); }
+                    if sbtn(ui, "Priority +").clicked() { act = Some((k, 2)); }
+                    if sbtn(ui, "Remove").clicked() { act = Some((k, 3)); }
+                });
+            });
+        }
         if let Some((k, a)) = act {
             match a {
                 0 if k > 0 => m.queue.swap(k, k - 1),
@@ -485,21 +485,24 @@ fn alerts(ui: &mut Ui, m: &mut Model) {
     ui.add_space(6.0);
     panel(ui, "Farm alerts and failure-detection feed", |ui| {
         let mut act: Option<(usize, u8)> = None;
-        egui::Grid::new("alerts").num_columns(6).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
-            for h in ["Time", "Machine", "Level", "Message", "", ""] { th(ui, h); }
-            ui.end_row();
-            for (k, a) in m.alerts.iter().enumerate().rev() {
-                let show = match m.st.al_filter { 1 => !a.ack, 2 => a.sev == Sev::Err, 3 => a.sev == Sev::Warn, _ => true };
-                if !show { continue; }
-                ui.label(mono(a.ts.clone()).color(FAINT));
-                ui.label(m.fleet.get(a.machine).map(|f| f.name.clone()).unwrap_or_default());
-                match a.sev { Sev::Info => status(ui, Status::Idle, "info"), Sev::Warn => status(ui, Status::Warn, "warn"), Sev::Err => status(ui, Status::Err, "error") }
-                wrap(ui, 520.0, if a.ack { dim(a.msg.clone()) } else { RichText::new(a.msg.clone()) });
-                if a.ack { ui.label(dim("acked")); } else if crate::ui::sbtn(ui, "ack").clicked() { act = Some((k, 0)); }
-                if crate::ui::sbtn(ui, "open").clicked() { act = Some((k, 1)); }
-                ui.end_row();
-            }
-        });
+        for (k, a) in m.alerts.iter().enumerate().rev() {
+            let show = match m.st.al_filter { 1 => !a.ack, 2 => a.sev == Sev::Err, 3 => a.sev == Sev::Warn, _ => true };
+            if !show { continue; }
+            row_card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    match a.sev { Sev::Info => dot(ui, Status::Idle), Sev::Warn => dot(ui, Status::Warn), Sev::Err => dot(ui, Status::Err) }
+                    ui.label(RichText::new(m.fleet.get(a.machine).map(|f| f.name.clone()).unwrap_or_default()).strong().size(13.0));
+                    ui.label(mono(a.ts.clone()).size(11.0).color(FAINT));
+                    if a.ack { ui.label(dim("acknowledged")); }
+                });
+                ui.add(egui::Label::new(if a.ack { dim(a.msg.clone()) } else { RichText::new(a.msg.clone()).size(13.0) }).wrap());
+                ui.add_space(3.0);
+                ui.horizontal(|ui| {
+                    if !a.ack && sbtn(ui, "Acknowledge").clicked() { act = Some((k, 0)); }
+                    if sbtn(ui, "Open machine").clicked() { act = Some((k, 1)); }
+                });
+            });
+        }
         match act {
             Some((k, 0)) => m.alerts[k].ack = true,
             Some((k, _)) => { let i = m.alerts[k].machine; m.switch_machine(i); m.goto = Some(Page::Dashboard); }
@@ -509,11 +512,11 @@ fn alerts(ui: &mut Ui, m: &mut Model) {
 }
 
 fn analytics(ui: &mut Ui, m: &mut Model) {
-    ui.columns(2, |c| {
-        panel(&mut c[0], "Printers running (last 4 min)", |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), "Printers running (last 4 min)", |ui| {
             plot(ui, 150.0, &[Series::from_ring("printing", G1, &m.h_farm_n)], (0.0, HIST as f32), (0.0, m.fleet.len() as f32 + 1.0), "machines");
         });
-        panel(&mut c[1], "Filament rate", |ui| {
+        panel(c.at(1), "Filament rate", |ui| {
             plot(ui, 150.0, &[Series::from_ring("g/h", G2, &m.h_farm_g)], (0.0, HIST as f32), (0.0, 2400.0), "g per hour");
         });
     });
@@ -553,8 +556,8 @@ fn analytics(ui: &mut Ui, m: &mut Model) {
 }
 
 fn rollout(ui: &mut Ui, m: &mut Model) {
-    ui.columns(2, |c| {
-        panel(&mut c[0], &format!("Staged firmware roll-out to {}", TARGET_FW), |ui| {
+    adaptive(ui, 2, |c| {
+        panel(c.at(0), &format!("Staged firmware roll-out to {}", TARGET_FW), |ui| {
             for w in 1..=3u8 {
                 let names: Vec<String> = m.fleet.iter().filter(|f| f.wave == w).map(|f| f.name.clone()).collect();
                 ui.horizontal(|ui| {
@@ -591,7 +594,7 @@ fn rollout(ui: &mut Ui, m: &mut Model) {
             });
             if m.rollout.done { ui.label(dim("Complete: every wave passed its health gate.")); }
         });
-        panel(&mut c[1], "Health gates and firmware spread", |ui| {
+        panel(c.at(1), "Health gates and firmware spread", |ui| {
             for t in ["No machine in the next wave has a latched fault", "No node bootloader rollbacks in the previous wave", "Heartbeats and time sync nominal", "Applied between jobs; signed images only"] {
                 ui.horizontal(|ui| { dot(ui, Status::Ok); ui.label(t); });
             }

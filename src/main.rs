@@ -69,20 +69,19 @@ impl eframe::App for App {
         if let Some(p) = self.m.goto.take() {
             self.page = p;
         }
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
-            self.nav_open = !self.nav_open;
-        }
 
         paint_background(ctx);
         if ctx.input(|i| i.key_pressed(egui::Key::F1)) && self.tour.is_none() {
             self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
         }
         self.top_bar(ctx);
+        // The sidebar is always present: full width normally, an icon rail on narrow windows.
+        let rail = ctx.screen_rect().width() < 1200.0;
         egui::SidePanel::left("nav")
-            .exact_width(228.0)
+            .exact_width(if rail { 64.0 } else { 228.0 })
             .resizable(false)
             .frame(egui::Frame::new().fill(PANEL).stroke(egui::Stroke::new(1.0_f32, LINE)).inner_margin(egui::Margin::symmetric(0, 8)))
-            .show_animated(ctx, self.nav_open, |ui| self.nav(ui));
+            .show(ctx, |ui| self.nav(ui, rail));
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(18, 14)))
@@ -91,6 +90,9 @@ impl eframe::App for App {
                     let w = ui.available_width().min(1500.0) - 10.0;
                     ui.set_max_width(w);
                     pages::show(ui, self.page, &mut self.m);
+                    if std::env::var("MACH5_DEBUG").is_ok() && ui.min_rect().width() > w + 2.0 {
+                        eprintln!("OVERFLOW page={:?} tab={} used={:.0} avail={:.0}", self.page, self.m.st.tab, ui.min_rect().width(), w);
+                    }
                 });
             });
         if let Some(mut tour) = self.tour.take() {
@@ -111,12 +113,7 @@ impl App {
                     ui.painter().add(s);
                 }
                 ui.horizontal_centered(|ui| {
-                    let icon = if self.nav_open { "<<" } else { "=" };
-                    let tb = ui.add(egui::Button::new(RichText::new(icon).monospace().strong()).min_size(vec2(30.0, 26.0))).on_hover_text("Toggle navigation (Ctrl+B)");
-                    ui::set_anchor(ctx, "navtoggle", tb.rect);
-                    if tb.clicked() {
-                        self.nav_open = !self.nav_open;
-                    }
+                    let narrow = ctx.screen_rect().width() < 1150.0;
                     ui.label(RichText::new("MACH5").monospace().strong().size(15.0).color(WHITE));
                     ui.label(ui::dim("/"));
                     ui.label(RichText::new(self.page.title()).color(TEXT));
@@ -125,14 +122,16 @@ impl App {
                             self.m.estop();
                         }
                         ui.add_space(10.0);
-                        ui.label(ui::mono("API v1.4.2 signed").color(DIM));
-                        ui.add_space(10.0);
+                        if !narrow {
+                            ui.label(ui::mono("API v1.4.2 signed").color(DIM));
+                            ui.add_space(10.0);
+                        }
                         ui::status(ui, self.m.state.status(), self.m.state.label());
                         ui.add_space(10.0);
                         let mut pick = None;
                         let cur = self.m.active;
-                        let label = format!("{}  {}", self.m.fleet[cur].name, self.m.fleet[cur].ip);
-                        let cb = egui::ComboBox::from_id_salt("machine_switch").width(190.0).selected_text(label).show_ui(ui, |ui| {
+                        let label = if narrow { self.m.fleet[cur].name.clone() } else { format!("{}  {}", self.m.fleet[cur].name, self.m.fleet[cur].ip) };
+                        let cb = egui::ComboBox::from_id_salt("machine_switch").width(if narrow { 130.0 } else { 190.0 }).selected_text(label).show_ui(ui, |ui| {
                             for (i, f) in self.m.fleet.iter().enumerate() {
                                 ui.horizontal(|ui| {
                                     ui::dot(ui, f.state.status());
@@ -147,25 +146,35 @@ impl App {
             });
     }
 
-    fn nav(&mut self, ui: &mut egui::Ui) {
+    fn nav(&mut self, ui: &mut egui::Ui, rail: bool) {
         ui::set_anchor(ui.ctx(), "nav", ui.max_rect());
         if let Some(s) = ui::frost_shape(ui.ctx(), ui.max_rect()) {
             ui.painter().add(s);
         }
-        ui.horizontal(|ui| {
-            ui.add_space(14.0);
-            ui.label(RichText::new("MACH5").monospace().strong().size(17.0).color(WHITE));
-            ui.label(ui::dim("control"));
-        });
+        if rail {
+            ui.vertical_centered(|ui| { ui.label(RichText::new("M5").monospace().strong().size(17.0).color(WHITE)); });
+        } else {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(RichText::new("MACH5").monospace().strong().size(17.0).color(WHITE));
+                ui.label(ui::dim("control"));
+            });
+        }
         ui.add_space(6.0);
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 64.0).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (group, pages) in Page::GROUPS {
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(14.0);
-                    ui.label(RichText::new(group.to_uppercase()).monospace().size(10.5).color(FAINT));
-                });
+                if rail {
+                    let y = ui.cursor().top();
+                    ui.painter().line_segment([egui::pos2(ui.max_rect().left() + 14.0, y), egui::pos2(ui.max_rect().right() - 14.0, y)], egui::Stroke::new(1.0_f32, LINE));
+                    ui.add_space(4.0);
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+                        ui.label(RichText::new(group.to_uppercase()).monospace().size(10.5).color(FAINT));
+                    });
+                }
                 for p in pages.iter() {
                     let sel = self.page == *p;
                     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
@@ -173,11 +182,17 @@ impl App {
                     ui.painter().rect_filled(rect.shrink2(vec2(6.0, 0.0)), crate::theme::RAD, fill);
                     let col = if sel { WHITE } else { TEXT };
                     let icol = if sel { ACCENT } else if resp.hovered() { WHITE } else { DIM };
-                    icons::draw(&ui.painter().clone(), *p, rect.left_center() + vec2(26.0, 0.0), icol);
-                    ui.painter().text(rect.left_center() + vec2(46.0, 0.0), egui::Align2::LEFT_CENTER, p.title(), egui::FontId::proportional(13.5), col);
+                    let resp = if rail { resp.on_hover_text(p.title()) } else { resp };
+                    if rail {
+                        icons::draw(&ui.painter().clone(), *p, rect.center(), icol);
+                    } else {
+                        icons::draw(&ui.painter().clone(), *p, rect.left_center() + vec2(26.0, 0.0), icol);
+                        ui.painter().text(rect.left_center() + vec2(46.0, 0.0), egui::Align2::LEFT_CENTER, p.title(), egui::FontId::proportional(13.5), col);
+                    }
                     if let Some(a) = nav_alert(&self.m, *p) {
                         let (st, _) = a;
-                        ui.painter().rect_filled(egui::Rect::from_center_size(rect.right_center() - vec2(20.0, 0.0), vec2(7.0, 7.0)), crate::theme::RAD, st.color());
+                        let at = if rail { rect.right_top() + vec2(-12.0, 8.0) } else { rect.right_center() - vec2(20.0, 0.0) };
+                        ui.painter().rect_filled(egui::Rect::from_center_size(at, vec2(7.0, 7.0)), crate::theme::RAD, st.color());
                     }
                     if resp.clicked() {
                         self.page = *p;
@@ -187,19 +202,24 @@ impl App {
         });
         ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                if ui.button("Close nav").clicked() {
-                    self.nav_open = false;
-                }
-                if ui::primary(ui, "Tutorial") {
-                    self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                ui.label(ui::dim("Prototype: mock data"));
-            });
+            if rail {
+                ui.vertical_centered(|ui| {
+                    if ui::primary(ui, "?") {
+                        self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if ui::primary(ui, "Tutorial") {
+                        self.tour = Some(tour::Tour::new(0, self.page, self.nav_open));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    ui.label(ui::dim("Prototype: mock data"));
+                });
+            }
         });
     }
 }

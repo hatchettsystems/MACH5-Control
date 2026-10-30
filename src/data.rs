@@ -217,6 +217,10 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub con_filter: usize,
+    pub hist: Vec<String>,
+    pub hist_idx: usize,
+    pub con_t: f64,
     pub sp_q: String,
     pub sp_mat: usize,
     pub sp_loc: usize,
@@ -289,6 +293,7 @@ pub struct Model {
     pub phases_done: usize,
     pub rollout: Rollout,
     pub bld: crate::builder::Builder,
+    pub dash_order: Vec<u8>,
     pub active: usize,
     pub queue: Vec<QJob>,
     pub next_qid: u32,
@@ -477,6 +482,7 @@ impl Model {
             probe_driver: 0, probe_comp: true, clear_needed: false,
             decisions: [false; 8], phases_done: 1,
             bld: crate::builder::Builder::new(),
+            dash_order: load_dash_order(),
             rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
             active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: false, auto_pause: true,
             alerts: Vec::new(), fspools: Vec::new(), next_spool: 1,
@@ -652,6 +658,19 @@ impl Model {
             return;
         }
         self.acc = 0.0;
+        if self.t - self.st.con_t > 6.0 {
+            self.st.con_t = self.t;
+            let h = (self.heaters[0].cur, self.heaters[0].target);
+            let line = format!("ok T:{:.1} /{:.1} B:{:.1} /{:.1} C:{:.1} /{:.1}", h.0, h.1, self.heaters[1].cur, self.heaters[1].target, self.heaters[2].cur, self.heaters[2].target);
+            self.st.console.push(line);
+            if h.1 > 0.0 && (h.0 - h.1).abs() > 4.0 {
+                let msg = format!("warning: hotend {:.1} C is {:.1} C {} target", h.0, (h.0 - h.1).abs(), if h.0 < h.1 { "below" } else { "above" });
+                self.st.console.push(msg);
+            }
+            if self.st.console.len() > 700 {
+                self.st.console.drain(0..100);
+            }
+        }
         let t = self.t as f32;
         let n1 = self.rand() - 0.5;
         let n2 = self.rand() - 0.5;
@@ -764,4 +783,28 @@ fn config_sections() -> Vec<Section> {
             i("power_loss.checkpoint_layers", 1, "layers", 1.0, 100.0, "Checkpoint every N layers"),
         ]},
     ]
+}
+
+pub const DASH_CARDS: usize = 15;
+
+pub fn default_dash_order() -> Vec<u8> {
+    (0..DASH_CARDS as u8).collect()
+}
+
+fn dash_path() -> std::path::PathBuf {
+    let base = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    base.join(".mach5-dashboard")
+}
+
+/// The saved dashboard card order, or the default if missing or invalid.
+pub fn load_dash_order() -> Vec<u8> {
+    let parsed: Option<Vec<u8>> = std::fs::read_to_string(dash_path()).ok().map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect());
+    match parsed {
+        Some(v) if v.len() == DASH_CARDS && (0..DASH_CARDS as u8).all(|i| v.contains(&i)) => v,
+        _ => default_dash_order(),
+    }
+}
+
+pub fn save_dash_order(order: &[u8]) {
+    let _ = std::fs::write(dash_path(), order.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","));
 }
