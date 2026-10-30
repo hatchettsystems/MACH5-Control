@@ -126,8 +126,18 @@ pub fn panel(ui: &mut Ui, head: &str, f: impl FnOnce(&mut Ui)) {
         let cu = &mut prep.content_ui;
         cu.set_width((w - 22.0).max(10.0));
         if !head.is_empty() {
-            cu.label(RichText::new(head.to_uppercase()).size(11.0).color(DIM).monospace());
-            cu.add_space(4.0);
+            cu.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if let Some(g) = crate::icons::head_glyph(head) {
+                    let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                    crate::icons::glyph(&ui.painter().clone(), g, r.center(), Color32::from_gray(205), 0.0);
+                }
+                ui.label(RichText::new(head).size(14.0).strong().color(WHITE));
+            });
+            let y = cu.cursor().top() + 2.0;
+            let (l, r) = (cu.max_rect().left(), cu.max_rect().right());
+            cu.painter().line_segment([egui::pos2(l, y), egui::pos2(r, y)], Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 18)));
+            cu.add_space(9.0);
         }
         f(cu);
     }
@@ -267,14 +277,142 @@ pub fn wrap(ui: &mut Ui, w: f32, text: impl Into<egui::WidgetText>) {
 pub fn th(ui: &mut Ui, t: &str) {
     ui.label(RichText::new(t.to_uppercase()).size(10.5).color(DIM).monospace());
 }
-pub fn kv(ui: &mut Ui, id: &str, rows: &[(&str, String)]) {
-    egui::Grid::new(id).num_columns(2).spacing([18.0, 4.0]).show(ui, |ui| {
-        for (k, v) in rows {
-            ui.label(dim(*k));
-            ui.label(mono(v.clone()));
-            ui.end_row();
-        }
+/// A single inset tile: small caption above a large value.
+pub fn tile(ui: &mut Ui, w: f32, caption: &str, value: &str) {
+    Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, CARD_LINE))
+        .corner_radius(7)
+        .inner_margin(Margin::symmetric(11, 8))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(w - 24.0);
+                ui.set_min_height(36.0);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(dim(caption));
+                ui.add(egui::Label::new(mono(value).size(14.5).color(WHITE)).wrap());
+            });
+        });
+}
+
+/// A wrapped grid of equal tiles that fills the available width.
+pub fn tiles(ui: &mut Ui, items: &[(&str, String)]) {
+    tiles_min(ui, items, 168.0);
+}
+pub fn tiles_min(ui: &mut Ui, items: &[(&str, String)], min_w: f32) {
+    let gap = 8.0;
+    let avail = ui.available_width();
+    let n = (((avail + gap) / (min_w + gap)).floor() as usize).clamp(1, items.len().max(1));
+    let w = (avail - gap * (n as f32 - 1.0)) / n as f32;
+    for row in items.chunks(n) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (k, v) in row {
+                tile(ui, w, k, v);
+            }
+        });
+        ui.add_space(gap - 2.0);
+    }
+}
+
+/// Replaces the old two-column key/value grid with tiles.
+pub fn kv(ui: &mut Ui, _id: &str, rows: &[(&str, String)]) {
+    tiles(ui, rows);
+}
+
+/// Icon tile: glyph, big value, caption (like the reference status tiles).
+pub fn stat_tile(ui: &mut Ui, w: f32, glyph: &str, value: &str, caption: &str) {
+    Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, CARD_LINE))
+        .corner_radius(8)
+        .inner_margin(Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(w - 26.0);
+                ui.spacing_mut().item_spacing.y = 3.0;
+                let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), Color32::from_gray(190), 0.0);
+                ui.label(mono(value).size(19.0).color(WHITE));
+                ui.label(dim(caption));
+            });
+        });
+}
+
+/// One list item as its own rounded card, so rows read as separate things.
+pub fn row_card(ui: &mut Ui, f: impl FnOnce(&mut Ui)) {
+    let w = ui.available_width();
+    Frame::new()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, CARD_LINE))
+        .corner_radius(9)
+        .inner_margin(Margin::symmetric(11, 8))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(w - 24.0);
+                f(ui);
+            });
+        });
+    ui.add_space(5.0);
+}
+
+/// Square icon box used at the start of a row card.
+pub fn icon_box(ui: &mut Ui, glyph: &str) {
+    let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+    ui.painter().rect_filled(r, 8.0, Color32::from_rgb(22, 24, 29));
+    ui.painter().rect_stroke(r, 8.0, Stroke::new(1.0_f32, CARD_LINE), StrokeKind::Inside);
+    crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), Color32::from_gray(215), 0.0);
+}
+
+/// `-  value  +` stepper. Returns true when changed.
+pub fn stepper(ui: &mut Ui, v: &mut f32, range: (f32, f32), step: f32, unit: &str) -> bool {
+    let mut ch = false;
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().button_padding = vec2(0.0, 0.0);
+        if ui.add(Button::new(RichText::new("-").size(16.0)).min_size(vec2(30.0, 30.0))).clicked() { *v = (*v - step).max(range.0); ch = true; }
+        let (r, _) = ui.allocate_exact_size(vec2(66.0, 30.0), Sense::hover());
+        ui.painter().rect_filled(r, 7.0, INSET);
+        ui.painter().rect_stroke(r, 7.0, Stroke::new(1.0_f32, CARD_LINE), StrokeKind::Inside);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, format!("{:.0}{}", v, unit), FontId::monospace(13.0), WHITE);
+        if ui.add(Button::new(RichText::new("+").size(16.0)).min_size(vec2(30.0, 30.0))).clicked() { *v = (*v + step).min(range.1); ch = true; }
     });
+    ch
+}
+
+/// Round dial with an icon in the middle (drag up/down like `knob`).
+pub fn dial(ui: &mut Ui, val: &mut f32, range: (f32, f32), label: &str, glyph: &str, rot: f32, unit: &str) -> egui::Response {
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(66.0, 98.0), Sense::click_and_drag());
+    let span = range.1 - range.0;
+    let before = *val;
+    if resp.dragged() {
+        let fine = ui.input(|i| i.modifiers.shift);
+        *val -= resp.drag_delta().y * span / if fine { 700.0 } else { 150.0 };
+    }
+    if resp.hovered() {
+        let s = ui.input(|i| i.raw_scroll_delta.y);
+        if s != 0.0 { *val += s.signum() * span / 100.0; }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if resp.double_clicked() { *val = range.0; }
+    *val = val.clamp(range.0, range.1);
+    if *val != before { resp.mark_changed(); }
+    let t = if span > 0.0 { (*val - range.0) / span } else { 0.0 };
+    let c = egui::pos2(rect.center().x, rect.top() + 36.0);
+    let p = ui.painter();
+    let (a0, sweep) = (std::f32::consts::PI * 0.75, std::f32::consts::PI * 1.5);
+    let arc = |to: f32, r: f32| -> Vec<egui::Pos2> {
+        (0..=40).map(|k| { let a = a0 + sweep * (to * k as f32 / 40.0); c + vec2(a.cos(), a.sin()) * r }).collect()
+    };
+    p.circle_filled(c, 26.0, CARD);
+    p.add(Shape::line(arc(1.0, 26.0), Stroke::new(4.0_f32, Color32::from_gray(46))));
+    if t > 0.004 {
+        p.add(Shape::line(arc(t, 26.0), Stroke::new(4.0_f32, if resp.dragged() || resp.hovered() { Color32::from_rgb(120, 214, 255) } else { ACCENT })));
+    }
+    crate::icons::glyph(&p.clone(), glyph, c, Color32::from_gray(225), rot);
+    p.text(egui::pos2(rect.center().x, rect.top() + 78.0), Align2::CENTER_CENTER, format!("{:.0}{}", *val, unit), FontId::monospace(14.0), WHITE);
+    p.text(egui::pos2(rect.center().x, rect.top() + 93.0), Align2::CENTER_CENTER, label, FontId::proportional(11.5), DIM);
+    resp.on_hover_text(format!("{}: {:.0}{}\nDrag up / down, Shift = fine, scroll = nudge, double-click = minimum", label, *val, unit))
 }
 
 /// Horizontal bar. `st` colours it only when it signals a state.

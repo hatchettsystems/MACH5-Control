@@ -10,6 +10,11 @@ pub const LINE2: C = C::from_rgb(78, 78, 78);
 pub const TEXT: C = C::from_rgb(225, 225, 225);
 pub const DIM: C = C::from_rgb(156, 156, 156);
 pub const FAINT: C = C::from_rgb(88, 88, 88);
+/// Solid dark fills for tiles and row cards (never light grey).
+pub const CARD: C = C::from_rgb(15, 16, 19);
+pub const CARD_LINE: C = C::from_rgb(40, 42, 48);
+pub const INSET: C = C::from_rgb(8, 9, 11);
+
 pub const WHITE: C = C::from_rgb(250, 250, 250);
 
 /// Tertiary accent, used sparingly: active nav icon, tab underline, live job progress,
