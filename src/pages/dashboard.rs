@@ -441,10 +441,6 @@ fn p_console(ui: &mut Ui, m: &mut Model, h: f32) {
             for (i, n) in ["All", "Commands", "Warnings and errors"].iter().enumerate() {
                 if ui.selectable_label(m.st.con_filter == i, *n).clicked() { m.st.con_filter = i; }
             }
-            ui.add_space(8.0);
-            for (txt, c) in [("G/M code", ACCENT), ("MACRO", MACRO), ("warning", WARN), ("error", ERR), ("ok", OK)] {
-                ui.label(RichText::new(txt).monospace().size(11.5).color(c));
-            }
             if sbtn(ui, "Clear").clicked() { m.st.console.clear(); }
             if sbtn(ui, "Copy").clicked() { ui.ctx().copy_text(m.st.console.join("\n")); }
         });
