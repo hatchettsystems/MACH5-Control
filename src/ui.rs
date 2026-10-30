@@ -1406,7 +1406,7 @@ pub fn thumb(ui: &mut Ui, size: f32, name: &str, col: Color32) {
 /// Compact "Label: value" dropdown for a filter or mode. Returns true when the choice changed.
 pub fn pick(ui: &mut Ui, id: &str, label: &str, opts: &[&str], cur: &mut usize) -> bool {
     let before = *cur;
-    let text = if label.is_empty() { opts[(*cur).min(opts.len() - 1)].to_string() } else { format!("{}: {}", label, opts[(*cur).min(opts.len() - 1)]) };
+    let text = if label.is_empty() { opts[(*cur).min(opts.len() - 1)].to_string() } else { format!("{} | {}", label, opts[(*cur).min(opts.len() - 1)]) };
     with_button_style(ui, BK::Secondary, |ui| {
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
         egui::ComboBox::from_id_salt(id).selected_text(text).icon(|ui, rect, visuals, _open, _sel| {
