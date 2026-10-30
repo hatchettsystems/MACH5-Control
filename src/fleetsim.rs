@@ -328,6 +328,10 @@ impl Model {
             let (id, g) = (self.fspools[si].id, JOBS.iter().find(|j| j.0 == file).map(|j| j.3).unwrap_or(0.0));
             self.spool_log(id, &format!("Used {:.0} g printing {} on {}", g, file, name));
         }
+        let (mat, secs) = (self.fleet[i].material, self.fleet[i].total);
+        let grams = JOBS.iter().find(|j| j.0 == file).map(|j| j.3).unwrap_or(0.0);
+        let ended = format!("2026-10-30 {}", &fmt_ts(self.t)[..5]);
+        self.history.push(HistEntry { file: file.clone(), mat, color: crate::pages::print_file_color(&file), status: 0, secs, grams, ended, machine: i });
         self.alert(i, Sev::Info, &format!("Print complete: {}", file));
     }
 
@@ -565,6 +569,23 @@ impl Model {
             self.alert(i, sev, msg);
         }
         self.alerts.iter_mut().skip(4).for_each(|a| a.ack = true);
+        let names = ["housing_set_v6.gcode", "pa_calib_tower.gcode", "benchy_calib.gcode", "enclosure_panel_left.gcode", "gear_train_x6.gcode", "mmu_test_4color.gcode", "housing_set_v7.gcode"];
+        let mats = ["PA-CF", "PETG", "PETG", "ASA", "PLA", "PLA", "PA-CF"];
+        let secs = [27120.0, 1080.0, 3720.0, 19080.0, 12300.0, 3120.0, 27600.0];
+        let grams = [308.0, 6.0, 14.0, 186.0, 98.0, 22.0, 312.0];
+        for mi in 0..self.fleet.len() {
+            for k in 0..9usize {
+                let j = (mi * 3 + k * 5) % names.len();
+                let st = if (mi + k * 3) % 11 == 0 { 2 } else if (mi + k * 2) % 7 == 0 { 1 } else { 0 };
+                let part = if st == 0 { 1.0 } else { 0.25 + hs(mi as u32 * 17 + k as u32, 4) * 0.5 };
+                self.history.push(HistEntry {
+                    file: names[j].to_string(), mat: mats[j], color: crate::pages::print_file_color(names[j]),
+                    status: st, secs: secs[j] * part, grams: grams[j] * part,
+                    ended: format!("2026-10-{:02} {:02}:{:02}", 29 - k as u32 * 2 % 27, 6 + (k * 3 + mi) % 16, (k * 13 + mi * 7) % 60),
+                    machine: mi,
+                });
+            }
+        }
         self.done_log.push("Tomahawk-09  pa_calib_tower.gcode  complete".into());
         self.done_log.push("Tomahawk-02  benchy_calib.gcode  complete".into());
     }

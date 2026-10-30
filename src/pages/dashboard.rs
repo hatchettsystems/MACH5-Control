@@ -5,7 +5,7 @@ use crate::data::*;
 use crate::fleetsim::eta;
 use crate::theme::*;
 use crate::ui::*;
-use eframe::egui::{self, vec2, Align, Color32, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, Ui};
+use eframe::egui::{self, vec2, Align, Align2, Color32, FontId, Frame, Layout, Margin, RichText, Sense, Stroke, StrokeKind, Ui};
 
 fn clock(secs: f32) -> String {
     let s = secs as u32 % 86400;
@@ -35,7 +35,7 @@ const CARD_INFO: [(&str, Span); DASH_CARDS] = [
     ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Movement", Span::Half),
     ("Print parameters", Span::Half), ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half),
     ("Motion system", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half), ("Console", Span::Full),
-    ("Print history", Span::Half), ("Recent events", Span::Half),
+    ("Print history", Span::Half), ("Recent events", Span::Half), ("Objects and recovery", Span::Half),
 ];
 
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
@@ -63,7 +63,8 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
             10 => p_nodes(ui, m, 0.0),
             11 => p_console(ui, m, 520.0),
             12 => p_history(ui, m, 0.0),
-            _ => p_events(ui, m, 0.0),
+            13 => p_events(ui, m, 0.0),
+            _ => p_objects(ui, m),
         }
     });
     handle_drag(ui, m);
@@ -574,5 +575,71 @@ fn p_params(ui: &mut Ui, m: &mut Model) {
             ("Shaper Y", format!("{} {:.1} Hz", SHAPERS[m.shapers[1].kind], m.shapers[1].freq)),
         ], 130.0);
         if button(ui, "Open tuning") { m.goto = Some(Page::Motion); }
+    });
+}
+
+fn p_objects(ui: &mut Ui, m: &mut Model) {
+    panel(ui, "Objects and recovery", |ui| {
+        ui.label(dim("Click an object to cancel it mid-print. Boundaries come from G-code metadata."));
+        ui.add_space(4.0);
+        let side = ui.available_width().clamp(200.0, 340.0);
+            let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click());
+            let p = ui.painter_at(rect);
+            p.rect_filled(rect, crate::theme::RAD, Color32::BLACK);
+            let sc = side / 350.0;
+            for g in 1..7 {
+                let o = g as f32 * 50.0 * sc;
+                p.line_segment([rect.min + vec2(o, 0.0), rect.min + vec2(o, side)], Stroke::new(1.0_f32, Color32::from_gray(22)));
+                p.line_segment([rect.min + vec2(0.0, o), rect.min + vec2(side, o)], Stroke::new(1.0_f32, Color32::from_gray(22)));
+            }
+            let click = if resp.clicked() { resp.interact_pointer_pos() } else { None };
+            let mut toggled = None;
+            for o in m.job.objects.iter() {
+                let r = egui::Rect::from_min_size(rect.min + vec2(o.x * sc, o.y * sc), vec2(o.w * sc, o.h * sc));
+                if o.excluded {
+                    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, FAINT), StrokeKind::Inside);
+                    p.line_segment([r.left_top(), r.right_bottom()], Stroke::new(1.0_f32, FAINT));
+                    p.line_segment([r.right_top(), r.left_bottom()], Stroke::new(1.0_f32, FAINT));
+                } else {
+                    p.rect_filled(r, crate::theme::RAD, Color32::from_gray(70));
+                    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, Color32::from_gray(200)), StrokeKind::Inside);
+                }
+                p.text(r.center(), Align2::CENTER_CENTER, o.name, FontId::monospace(10.0), if o.excluded { FAINT } else { WHITE });
+                if let Some(pt) = click { if r.contains(pt) { toggled = Some(o.id); } }
+            }
+            p.rect_stroke(rect, crate::theme::RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
+            if let Some(id) = toggled {
+                let o = &mut m.job.objects[id];
+                o.excluded = !o.excluded;
+                let msg = format!("{} {}", if o.excluded { "Excluded" } else { "Restored" }, o.name);
+                m.log(Sev::Info, "exclude", &msg);
+            }
+            ui.label(dim("350 x 350 mm bed. Boundaries come from G-code metadata."));
+
+        ui.add_space(8.0);
+        for o in m.job.objects.iter_mut() {
+            row_card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(o.name).size(13.0).color(if o.excluded { FAINT } else { WHITE }));
+                    ui.label(dim(format!("{:.0} x {:.0} mm", o.w, o.h)));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if sbtn(ui, if o.excluded { "Restore" } else { "Exclude" }).clicked() { o.excluded = !o.excluded; }
+                    });
+                });
+            });
+        }
+        ui.label(RichText::new("Power-loss recovery").strong().size(13.5).color(WHITE));
+        ui.add_space(4.0);
+        tiles_min(ui, &[
+            ("Checkpoint", format!("layer {} / {}", m.job.layer, m.job.layers)),
+            ("Z restored", format!("{:.2} mm", m.pos[2])),
+        ], 120.0);
+        ui.horizontal_wrapped(|ui| {
+            if button_en(ui, m.resume_ready && m.state != MState::Printing, "Resume from checkpoint") {
+                m.state = MState::Printing;
+                m.log(Sev::Info, "plr", "Resuming with Z and thermal state restored");
+            }
+            if button(ui, "Discard checkpoint") { m.resume_ready = false; }
+        });
     });
 }

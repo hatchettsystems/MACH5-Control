@@ -1190,3 +1190,95 @@ pub fn axis_field(ui: &mut Ui, w: f32, label: &str, actual: f32, target: f32, de
     p.text(r.right_center() + vec2(-14.0, 6.0), Align2::RIGHT_CENTER, format!("{:.*}", dec, actual), FontId::monospace(17.0), WHITE);
     p.text(r.right_top() + vec2(-12.0, 8.0), Align2::RIGHT_CENTER, format!("[{:.*}]", dec, target), FontId::monospace(10.0), Color32::from_gray(120));
 }
+
+// ---------------------------------------------------------------------------------------------
+// G-code thumbnails: stand-ins for the preview image a slicer embeds in the file.
+
+fn shade(c: Color32, f: f32) -> Color32 {
+    Color32::from_rgb((c.r() as f32 * f).min(255.0) as u8, (c.g() as f32 * f).min(255.0) as u8, (c.b() as f32 * f).min(255.0) as u8)
+}
+
+pub fn name_hash(s: &str) -> u32 {
+    s.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619))
+}
+
+/// Isometric-looking block: front, right side and top faces.
+fn iso_box(p: &egui::Painter, o: egui::Pos2, w: f32, h: f32, d: f32, col: Color32) {
+    let top = vec![o + vec2(0.0, -h), o + vec2(w, -h), o + vec2(w + d, -h - d * 0.55), o + vec2(d, -h - d * 0.55)];
+    let side = vec![o + vec2(w, 0.0), o + vec2(w + d, -d * 0.55), o + vec2(w + d, -h - d * 0.55), o + vec2(w, -h)];
+    p.add(Shape::convex_polygon(vec![o, o + vec2(w, 0.0), o + vec2(w, -h), o + vec2(0.0, -h)], shade(col, 0.78), Stroke::NONE));
+    p.add(Shape::convex_polygon(side, shade(col, 0.52), Stroke::NONE));
+    p.add(Shape::convex_polygon(top, shade(col, 1.05), Stroke::NONE));
+}
+
+fn gear(p: &egui::Painter, c: egui::Pos2, r: f32, teeth: usize, col: Color32) {
+    let n = teeth * 2;
+    let pts: Vec<egui::Pos2> = (0..n * 2).map(|k| { let a = k as f32 / (n * 2) as f32 * std::f32::consts::TAU; let rr = if (k / 2) % 2 == 0 { r } else { r * 0.8 }; c + vec2(a.cos(), a.sin()) * rr }).collect();
+    p.add(Shape::convex_polygon(pts, shade(col, 0.9), Stroke::NONE));
+    p.circle_filled(c, r * 0.55, shade(col, 0.7));
+    p.circle_filled(c, r * 0.22, Color32::from_rgb(14, 15, 18));
+}
+
+pub fn draw_thumb(p: &egui::Painter, rect: Rect, seed: u32, col: Color32) {
+    // very dark filament (black) would vanish on the dark preview: lift it
+    let lum = 0.299 * col.r() as f32 + 0.587 * col.g() as f32 + 0.114 * col.b() as f32;
+    let col = if lum < 70.0 { Color32::from_rgb(78, 82, 92) } else { col };
+    p.rect_filled(rect, 9.0, Color32::from_rgb(16, 18, 23));
+    // faint print plate
+    let pl = Rect::from_min_max(egui::pos2(rect.left() + rect.width() * 0.08, rect.bottom() - rect.height() * 0.22), egui::pos2(rect.right() - rect.width() * 0.08, rect.bottom() - rect.height() * 0.1));
+    p.rect_filled(pl, 4.0, Color32::from_rgb(34, 38, 46));
+    let s = rect.width().min(rect.height());
+    let base = egui::pos2(rect.left() + rect.width() * 0.5, rect.bottom() - rect.height() * 0.17);
+    match seed % 6 {
+        0 => {
+            // housing: box with a pocket
+            iso_box(&p.clone(), base + vec2(-s * 0.3, 0.0), s * 0.46, s * 0.34, s * 0.24, col);
+            p.add(Shape::convex_polygon(vec![base + vec2(-s * 0.2, -s * 0.34 - s * 0.03), base + vec2(s * 0.08, -s * 0.34 - s * 0.03), base + vec2(s * 0.16, -s * 0.34 - s * 0.1), base + vec2(-s * 0.12, -s * 0.34 - s * 0.1)], shade(col, 0.45), Stroke::NONE));
+        }
+        1 => {
+            // boat: hull, cabin, funnel
+            let hull = vec![base + vec2(-s * 0.34, -s * 0.2), base + vec2(s * 0.34, -s * 0.2), base + vec2(s * 0.24, 0.0), base + vec2(-s * 0.26, 0.0)];
+            p.add(Shape::convex_polygon(hull, shade(col, 0.8), Stroke::NONE));
+            iso_box(p, base + vec2(-s * 0.14, -s * 0.2), s * 0.26, s * 0.2, s * 0.12, col);
+            p.rect_filled(Rect::from_min_size(base + vec2(s * 0.02, -s * 0.52), vec2(s * 0.08, s * 0.14)), 2.0, shade(col, 0.6));
+        }
+        2 => {
+            // flat panel with holes
+            iso_box(p, base + vec2(-s * 0.34, 0.0), s * 0.62, s * 0.1, s * 0.3, col);
+            for k in 0..3 { p.circle_filled(base + vec2(-s * 0.2 + k as f32 * s * 0.2, -s * 0.2), s * 0.035, Color32::from_rgb(16, 18, 23)); }
+        }
+        3 => {
+            // meshed gears
+            gear(p, base + vec2(-s * 0.14, -s * 0.28), s * 0.24, 8, col);
+            gear(p, base + vec2(s * 0.19, -s * 0.2), s * 0.16, 6, shade(col, 0.85));
+        }
+        4 => {
+            // calibration tower: stacked, narrowing blocks
+            for k in 0..5 {
+                let w = s * (0.34 - k as f32 * 0.04);
+                iso_box(p, base + vec2(-w / 2.0 - s * 0.04, -(k as f32) * s * 0.11), w, s * 0.11, s * 0.1, shade(col, 1.0 - k as f32 * 0.05));
+            }
+        }
+        _ => {
+            // multi-colour set
+            let cols = [col, shade(col, 0.6), Color32::from_rgb(220, 224, 230)];
+            for (k, cc) in cols.iter().enumerate() {
+                iso_box(p, base + vec2(-s * 0.34 + k as f32 * s * 0.24, 0.0), s * 0.18, s * (0.18 + 0.06 * k as f32), s * 0.12, *cc);
+            }
+        }
+    }
+    p.rect_stroke(rect, 9.0, Stroke::new(1.0_f32, CARD_LINE), StrokeKind::Inside);
+}
+
+pub fn thumb(ui: &mut Ui, size: f32, name: &str, col: Color32) {
+    let (r, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    draw_thumb(&ui.painter_at(r), r, name_hash(name), col);
+}
+
+/// Small choice button: solid accent when selected.
+pub fn choice_btn(ui: &mut Ui, selected: bool, t: &str) -> bool {
+    with_button_style(ui, selected, |ui| {
+        ui.spacing_mut().button_padding = vec2(12.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.5).color(if selected { Color32::from_rgb(4, 14, 22) } else { WHITE })).min_size(vec2(0.0, 26.0))).clicked()
+    })
+}

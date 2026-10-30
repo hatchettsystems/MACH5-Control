@@ -172,6 +172,7 @@ pub struct Drive {
     pub irms: f32,
 }
 
+#[derive(Clone)]
 pub struct FileEntry { pub name: &'static str, pub size_mb: f32, pub mins: u32, pub grams: f32, pub objects: u32, pub mat: &'static str, pub slicer: &'static str }
 
 pub struct Profile { pub name: &'static str, pub nozzle: f32, pub bed: f32, pub chamber: f32, pub pa: f32, pub flow: f32, pub fan: f32 }
@@ -240,6 +241,9 @@ pub struct Frame { pub t: f64, pub seg: Seg, pub id: u32, pub class: &'static st
 
 pub struct Shaper { pub axis: &'static str, pub kind: usize, pub freq: f32, pub damp: f32, pub max_accel: f32, pub when: &'static str }
 
+#[derive(Clone)]
+pub struct HistEntry { pub file: String, pub mat: &'static str, pub color: &'static str, pub status: u8, pub secs: f32, pub grams: f32, pub ended: String, pub machine: usize }
+
 pub struct Cal { pub running: bool, pub step: usize, pub prog: f32 }
 pub struct FwRun { pub running: bool, pub prog: f32, pub idx: usize }
 pub struct Sim { pub running: bool, pub prog: f32, pub results: Vec<(&'static str, f32, f32, f32)>, pub faults: [bool; 4], pub log: Vec<String> }
@@ -269,6 +273,9 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
+    pub file_q: String,
+    pub file_sort: usize,
+    pub hist_filter: usize,
     pub con_filter: usize,
     pub hist: Vec<String>,
     pub hist_idx: usize,
@@ -346,6 +353,7 @@ pub struct Model {
     pub rollout: Rollout,
     pub bld: crate::builder::Builder,
     pub dash_order: Vec<u8>,
+    pub history: Vec<HistEntry>,
     pub hub_sel: std::collections::HashMap<Page, Page>,
     pub active: usize,
     pub queue: Vec<QJob>,
@@ -536,6 +544,7 @@ impl Model {
             decisions: [false; 8], phases_done: 1,
             bld: crate::builder::Builder::new(),
             dash_order: load_dash_order(),
+            history: Vec::new(),
             hub_sel: std::collections::HashMap::new(),
             rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
             active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: false, auto_pause: true,
@@ -839,7 +848,7 @@ fn config_sections() -> Vec<Section> {
     ]
 }
 
-pub const DASH_CARDS: usize = 14;
+pub const DASH_CARDS: usize = 15;
 
 pub fn default_dash_order() -> Vec<u8> {
     (0..DASH_CARDS as u8).collect()

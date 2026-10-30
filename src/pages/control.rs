@@ -1,7 +1,7 @@
 use crate::data::*;
 use crate::theme::*;
 use crate::ui::*;
-use eframe::egui::{self, vec2, Align2, Color32, DragValue, FontId, RichText, Sense, Stroke, StrokeKind, Ui};
+use eframe::egui::{self, DragValue, Ui};
 
 pub fn state_actions(ui: &mut Ui, m: &mut Model) {
     ui.horizontal(|ui| match m.state {
@@ -143,130 +143,6 @@ pub fn run_cmd(m: &mut Model, cmd: &str) {
         }
         _ => say(m, &format!("error: Unknown command '{}' - not in the API schema (try HELP)", cmd)),
     }
-}
-
-pub fn print(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Print", "Files on SD, queue, object exclusion and power-loss recovery");
-    adaptive(ui, 2, |c| {
-        panel(c.at(0), "Files (SD)", |ui| {
-            for (k, f) in m.files.iter().enumerate() {
-                let sel = m.st.sel_file == k;
-                let mut hit = false;
-                card_frame(ui, ui.available_width(), sel, |ui| {
-                    if ui.selectable_label(sel, RichText::new(f.name).strong().size(13.5)).clicked() { hit = true; }
-                    ui.label(dim(format!("{}  -  {}h{:02}  -  {:.0} g  -  {} object(s)", f.mat, f.mins / 60, f.mins % 60, f.grams, f.objects)));
-                });
-                ui.add_space(4.0);
-                if hit { m.st.sel_file = k; }
-            }
-            ui.add_space(6.0);
-            let (fname, fsize, fslicer) = {
-                let f = &m.files[m.st.sel_file];
-                (f.name, f.size_mb, f.slicer)
-            };
-            kv(ui, "file_meta", &[
-                ("Size", format!("{:.1} MB", fsize)),
-                ("Slicer", fslicer.to_string()),
-                ("Adaptive mesh", "footprint from parsed G-code".into()),
-            ]);
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if primary(ui, "Print") {
-                    let n = fname;
-                    m.job.file = n.to_string();
-                    m.job.progress = 0.0;
-                    m.job.elapsed = 0.0;
-                    m.job.layer = 0;
-                    m.state = MState::Printing;
-                    m.log(Sev::Info, "job", &format!("Start {}", n));
-                }
-                button(ui, "Add to queue");
-                button(ui, "Upload...");
-                button(ui, "Delete");
-            });
-        });
-        panel(c.at(1), "Queue", |ui| {
-            egui::Grid::new("queue").num_columns(3).striped(true).spacing([14.0, 5.0]).show(ui, |ui| {
-                for h in ["#", "File", "Est."] { th(ui, h); }
-                ui.end_row();
-                for (k, (n, e)) in [("enclosure_panel_left.gcode", "5h18"), ("gear_train_x6.gcode", "3h25")].iter().enumerate() {
-                    ui.label(mono((k + 1).to_string()));
-                    ui.label(*n);
-                    ui.label(mono(*e));
-                    ui.end_row();
-                }
-            });
-        });
-    });
-
-    adaptive(ui, 2, |c| {
-        panel(c.at(0), "Object exclusion - click an object to cancel it mid-print", |ui| {
-            let side = 320.0;
-            let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click());
-            let p = ui.painter_at(rect);
-            p.rect_filled(rect, crate::theme::RAD, Color32::BLACK);
-            let sc = side / 350.0;
-            for g in 1..7 {
-                let o = g as f32 * 50.0 * sc;
-                p.line_segment([rect.min + vec2(o, 0.0), rect.min + vec2(o, side)], Stroke::new(1.0_f32, Color32::from_gray(22)));
-                p.line_segment([rect.min + vec2(0.0, o), rect.min + vec2(side, o)], Stroke::new(1.0_f32, Color32::from_gray(22)));
-            }
-            let click = if resp.clicked() { resp.interact_pointer_pos() } else { None };
-            let mut toggled = None;
-            for o in m.job.objects.iter() {
-                let r = egui::Rect::from_min_size(rect.min + vec2(o.x * sc, o.y * sc), vec2(o.w * sc, o.h * sc));
-                if o.excluded {
-                    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, FAINT), StrokeKind::Inside);
-                    p.line_segment([r.left_top(), r.right_bottom()], Stroke::new(1.0_f32, FAINT));
-                    p.line_segment([r.right_top(), r.left_bottom()], Stroke::new(1.0_f32, FAINT));
-                } else {
-                    p.rect_filled(r, crate::theme::RAD, Color32::from_gray(70));
-                    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, Color32::from_gray(200)), StrokeKind::Inside);
-                }
-                p.text(r.center(), Align2::CENTER_CENTER, o.name, FontId::monospace(10.0), if o.excluded { FAINT } else { WHITE });
-                if let Some(pt) = click { if r.contains(pt) { toggled = Some(o.id); } }
-            }
-            p.rect_stroke(rect, crate::theme::RAD, Stroke::new(1.0_f32, LINE2), StrokeKind::Inside);
-            if let Some(id) = toggled {
-                let o = &mut m.job.objects[id];
-                o.excluded = !o.excluded;
-                let msg = format!("{} {}", if o.excluded { "Excluded" } else { "Restored" }, o.name);
-                m.log(Sev::Info, "exclude", &msg);
-            }
-            ui.label(dim("350 x 350 mm bed. Boundaries come from G-code metadata."));
-        });
-        panel(c.at(1), "Objects", |ui| {
-            egui::Grid::new("objs").num_columns(3).striped(true).spacing([16.0, 5.0]).show(ui, |ui| {
-                for h in ["Name", "Footprint", "State"] { th(ui, h); }
-                ui.end_row();
-                for o in m.job.objects.iter_mut() {
-                    ui.label(mono(o.name));
-                    ui.label(mono(format!("{:.0} x {:.0}", o.w, o.h)));
-                    let lbl = if o.excluded { "Restore" } else { "Exclude" };
-                    if crate::ui::sbtn(ui, lbl).clicked() { o.excluded = !o.excluded; }
-                    ui.end_row();
-                }
-            });
-            ui.add_space(8.0);
-            ui.label(RichText::new("POWER-LOSS RECOVERY").size(11.0).color(DIM).monospace());
-            ui.add_space(4.0);
-            kv(ui, "plr", &[
-                ("Checkpoint", format!("layer {} / {} (flash)", m.job.layer, m.job.layers)),
-                ("Z restored", format!("{:.2} mm", m.pos[2])),
-                ("Thermal state", format!("hotend {:.0}, bed {:.0}, chamber {:.0}", m.heaters[0].cur, m.heaters[1].cur, m.heaters[2].cur)),
-                ("Written", "every layer, wear-levelled".into()),
-            ]);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(m.resume_ready && m.state != MState::Printing, |ui| {
-                    if primary(ui, "Resume from checkpoint") {
-                        m.state = MState::Printing;
-                        m.log(Sev::Info, "plr", "Resuming with Z and thermal state restored");
-                    }
-                });
-                if button(ui, "Discard checkpoint") { m.resume_ready = false; }
-            });
-        });
-    });
 }
 
 pub fn thermal(ui: &mut Ui, m: &mut Model) {

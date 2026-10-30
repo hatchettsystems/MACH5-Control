@@ -9,6 +9,9 @@ mod dashboard;
 mod farm;
 mod hardware;
 mod materials;
+mod print;
+
+pub fn print_file_color(n: &str) -> &'static str { print::file_color(n) }
 mod spools;
 mod system;
 mod tuning;
@@ -40,7 +43,7 @@ pub fn show(ui: &mut Ui, page: Page, m: &mut Model) {
 fn leaf(ui: &mut Ui, page: Page, m: &mut Model) {
     match page {
         Page::Dashboard => dashboard::dashboard(ui, m),
-        Page::Print => control::print(ui, m),
+        Page::Print => print::print(ui, m),
         Page::Thermal => control::thermal(ui, m),
         Page::Motion => tuning::motion(ui, m),
         Page::Calibration => tuning::calibration(ui, m),
