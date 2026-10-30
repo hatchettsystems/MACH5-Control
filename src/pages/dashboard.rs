@@ -40,13 +40,33 @@ const CARD_INFO: [(&str, Span); DASH_CARDS] = [
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
     title(ui, "Dashboard", &format!("{} - live telemetry, mock data", m.name));
     ui.horizontal_wrapped(|ui| {
-        ui.label(dim("Drag a card by its header to rearrange. Cards pack together automatically and the layout is saved."));
+        ui.label(dim("Drag a card by its header. Others slide out of the way as you move; drop to place it."));
         if sbtn(ui, "Reset layout").clicked() { m.dash_order = default_dash_order(); save_dash_order(&m.dash_order); }
     });
     ui.add_space(6.0);
-    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("card_rects"), Vec::<(u8, egui::Rect)>::new()));
-    let items: Vec<(u8, Span)> = m.dash_order.iter().map(|&id| (id, CARD_INFO[id as usize].1)).collect();
-    masonry(ui, &items, |ui, id| {
+    let ctx = ui.ctx().clone();
+    let w = ui.available_width();
+    let origin = ui.cursor().min;
+    let spans = |order: &[u8]| -> Vec<(u8, Span)> { order.iter().map(|&id| (id, CARD_INFO[id as usize].1)).collect() };
+
+    // Where would a dragged card land? Hit-test against the current (settled) layout.
+    let (base, _) = dash_layout(&ctx, &spans(&m.dash_order), w);
+    let rects: Vec<(u8, egui::Rect)> = base.iter().map(|p| (p.id, egui::Rect::from_min_size(origin + vec2(p.x, p.y), vec2(p.w, p.h)))).collect();
+    let drag: Option<u8> = ctx.data(|d| d.get_temp(egui::Id::new("dash_drag")));
+    let pointer = ctx.input(|i| i.pointer.interact_pos());
+    let dropped: Option<(u8, egui::Pos2)> = ctx.data_mut(|d| d.remove_temp(egui::Id::new("drag_drop")));
+    if let Some((src, p)) = dropped {
+        if let Some(new) = drop_order(&m.dash_order, &rects, src, p) {
+            m.dash_order = new;
+            save_dash_order(&m.dash_order);
+        }
+    }
+    let preview: Vec<u8> = match (drag, pointer) {
+        (Some(src), Some(p)) => drop_order(&m.dash_order, &rects, src, p).unwrap_or_else(|| m.dash_order.clone()),
+        _ => m.dash_order.clone(),
+    };
+
+    let drawn = masonry(ui, &spans(&preview), |ui, id| {
         set_card(ui.ctx(), id);
         match id {
             0 => p_status(ui, m, 0.0),
@@ -66,58 +86,48 @@ pub fn dashboard(ui: &mut Ui, m: &mut Model) {
             _ => p_objects(ui, m),
         }
     });
-    handle_drag(ui, m);
-}
 
-/// Drop target for a card dragged to `p`: (target id, its rect, drop after it).
-fn drop_target(rects: &[(u8, egui::Rect)], src: u8, p: egui::Pos2) -> Option<(u8, egui::Rect, bool)> {
-    let best = rects.iter().filter(|(id, _)| *id != src).min_by(|a, b| {
-        let d = |r: &egui::Rect| { let c = r.clamp(p); (c - p).length() };
-        d(&a.1).partial_cmp(&d(&b.1)).unwrap()
-    })?;
-    let r = best.1;
-    let left = rects.iter().map(|(_, r)| r.left()).fold(f32::MAX, f32::min);
-    let right = rects.iter().map(|(_, r)| r.right()).fold(f32::MIN, f32::max);
-    let full_width = r.width() > (right - left) * 0.9;
-    let in_x = p.x >= r.left() && p.x <= r.right();
-    let after = if full_width || in_x { p.y > r.center().y } else { p.x > r.center().x };
-    Some((best.0, r, after))
-}
-
-fn handle_drag(ui: &mut Ui, m: &mut Model) {
-    let ctx = ui.ctx().clone();
-    let rects: Vec<(u8, egui::Rect)> = ctx.data(|d| d.get_temp(egui::Id::new("card_rects"))).unwrap_or_default();
-    let drag: Option<u8> = ctx.data(|d| d.get_temp(egui::Id::new("dash_drag")));
-    let drop: Option<(u8, egui::Pos2)> = ctx.data_mut(|d| d.remove_temp(egui::Id::new("drag_drop")));
-    if let (Some(src), Some(p)) = (drag, ctx.input(|i| i.pointer.interact_pos())) {
+    if let (Some(src), Some(p)) = (drag, pointer) {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drag_overlay")));
-        if let Some((_, r, after)) = drop_target(&rects, src, p) {
-            painter.rect_stroke(r, 8.0, Stroke::new(2.0_f32, ACCENT_DIM), egui::StrokeKind::Outside);
-            let full = r.width() > ui.available_width() * 0.9;
-            let bar = if full {
-                let y = if after { r.bottom() + 4.0 } else { r.top() - 4.0 };
-                egui::Rect::from_min_max(egui::pos2(r.left(), y - 2.0), egui::pos2(r.right(), y + 2.0))
-            } else {
-                let x = if after { r.right() + 4.0 } else { r.left() - 4.0 };
-                egui::Rect::from_min_max(egui::pos2(x - 2.0, r.top()), egui::pos2(x + 2.0, r.bottom()))
-            };
-            painter.rect_filled(bar, 2.0, ACCENT);
+        if let Some((_, r)) = drawn.iter().find(|(id, _)| *id == src) {
+            painter.rect_stroke(*r, 10.0, Stroke::new(2.0_f32, ACCENT), StrokeKind::Outside);
         }
         let label = CARD_INFO[src as usize].0;
-        let box_r = egui::Rect::from_min_size(p + vec2(14.0, 10.0), vec2(150.0, 28.0));
+        let box_r = egui::Rect::from_min_size(p + vec2(14.0, 10.0), vec2(170.0, 28.0));
         painter.rect_filled(box_r, 7.0, Color32::from_rgb(18, 40, 58));
-        painter.rect_stroke(box_r, 7.0, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
-        painter.text(box_r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(13.0), WHITE);
+        painter.rect_stroke(box_r, 7.0, Stroke::new(1.0_f32, ACCENT), StrokeKind::Inside);
+        painter.text(box_r.center(), Align2::CENTER_CENTER, label, FontId::proportional(13.0), WHITE);
+        ctx.request_repaint();
     }
-    if let Some((src, p)) = drop {
-        if let Some((tgt, _, after)) = drop_target(&rects, src, p) {
-            m.dash_order.retain(|x| *x != src);
-            if let Some(pos) = m.dash_order.iter().position(|x| *x == tgt) {
-                m.dash_order.insert(if after { pos + 1 } else { pos }, src);
-                save_dash_order(&m.dash_order);
-            }
+}
+
+/// The card order after dropping `src` at pointer `p`:
+/// upper edge of a card = insert above it (the card and everything below shift down),
+/// lower edge = insert below it, the middle = trade places with it.
+fn drop_order(order: &[u8], rects: &[(u8, egui::Rect)], src: u8, p: egui::Pos2) -> Option<Vec<u8>> {
+    let (tgt, r) = rects
+        .iter()
+        .filter(|(id, _)| *id != src)
+        .min_by(|a, b| {
+            let d = |r: &egui::Rect| (r.clamp(p) - p).length_sq();
+            d(&a.1).partial_cmp(&d(&b.1)).unwrap()
+        })
+        .map(|(id, r)| (*id, *r))?;
+    let inside = r.contains(p);
+    let ty = (p.y - r.top()) / r.height().max(1.0);
+    let zone = if inside { if ty < 0.28 { 0 } else if ty > 0.72 { 2 } else { 1 } } else if p.y < r.top() { 0 } else if p.y > r.bottom() { 2 } else { 1 };
+    let mut v = order.to_vec();
+    let si = v.iter().position(|x| *x == src)?;
+    let ti = v.iter().position(|x| *x == tgt)?;
+    match zone {
+        1 => v.swap(si, ti),
+        _ => {
+            v.remove(si);
+            let t = v.iter().position(|x| *x == tgt)?;
+            v.insert(if zone == 0 { t } else { t + 1 }, src);
         }
     }
+    Some(v)
 }
 
 fn p_status(ui: &mut Ui, m: &mut Model, h: f32) {

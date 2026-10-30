@@ -932,58 +932,115 @@ pub fn param(ui: &mut Ui, label: &str, v: &mut f32, range: (f32, f32), step: f32
     ch
 }
 
-/// Masonry layout: cards (of Full / Half / Quarter width) are packed into the highest free
-/// space on a 4, 2 or 1 column grid, so short cards never leave gaps.
-pub fn masonry(ui: &mut Ui, items: &[(u8, Span)], mut f: impl FnMut(&mut Ui, u8)) {
+/// One card placed on the dashboard grid.
+#[derive(Clone, Copy)]
+pub struct Placed {
+    pub id: u8,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+fn card_height(ctx: &egui::Context, id: u8) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(egui::Id::new(("card_h", id)))).unwrap_or(380.0)
+}
+
+/// Two-half grid. A half holds one half-width card or a pair of quarter cards (never a quarter
+/// beside a half card); full cards span both halves. Cards flow into the shorter half.
+/// Narrow windows use one column, and quarters become half cards when a half is too narrow to pair.
+pub fn dash_layout(ctx: &egui::Context, items: &[(u8, Span)], w: f32) -> (Vec<Placed>, f32) {
     let gap = 8.0;
-    let w = ui.available_width();
-    let n: usize = if w >= 1060.0 { 4 } else if w >= 560.0 { 2 } else { 1 };
-    let col_w = (w - gap * (n as f32 - 1.0)) / n as f32;
-    let ctx = ui.ctx().clone();
-    let height = |id: u8| -> f32 { ctx.data(|d| d.get_temp::<f32>(egui::Id::new(("card_h", id)))).unwrap_or(380.0) };
-    let cols_of = |s: Span| -> usize {
-        match (n, s) {
-            (4, Span::Full) => 4,
-            (4, Span::Half) => 2,
-            (2, Span::Full) => 2,
-            _ => 1,
-        }
-    };
-    let mut col_h = vec![0.0_f32; n];
-    let mut placed: Vec<(u8, f32, f32, usize)> = Vec::new(); // id, x, y, span cols
-    for (id, span) in items {
-        let sc = cols_of(*span);
-        let mut best = (0usize, f32::MAX);
-        for x in 0..=(n - sc) {
-            let y = col_h[x..x + sc].iter().cloned().fold(0.0_f32, f32::max);
-            if y < best.1 - 0.5 {
-                best = (x, y);
+    let two = w >= 700.0;
+    let half_w = if two { (w - gap) / 2.0 } else { w };
+    let pair_ok = half_w >= 440.0;
+    // build units: (ids, is_full, is_pair)
+    let mut units: Vec<(Vec<u8>, bool, bool)> = Vec::new();
+    let mut i = 0;
+    while i < items.len() {
+        let (id, span) = items[i];
+        match span {
+            Span::Full => units.push((vec![id], true, false)),
+            Span::Half => units.push((vec![id], false, false)),
+            Span::Quarter => {
+                if pair_ok && i + 1 < items.len() && items[i + 1].1 == Span::Quarter {
+                    units.push((vec![id, items[i + 1].0], false, true));
+                    i += 1;
+                } else {
+                    units.push((vec![id], false, false));
+                }
             }
         }
-        let h = height(*id);
-        for c in col_h.iter_mut().skip(best.0).take(sc) {
-            *c = best.1 + h;
-        }
-        placed.push((*id, best.0 as f32 * (col_w + gap), best.1, sc));
+        i += 1;
     }
-    let total = col_h.iter().cloned().fold(0.0_f32, f32::max);
+    let mut col = [0.0_f32; 2];
+    let mut out: Vec<Placed> = Vec::new();
+    for (ids, full, pair) in units {
+        if !two {
+            for id in ids {
+                let h = card_height(ctx, id);
+                let y = col[0];
+                out.push(Placed { id, x: 0.0, y, w, h });
+                col[0] = y + h + gap;
+            }
+            continue;
+        }
+        if full {
+            let id = ids[0];
+            let h = card_height(ctx, id);
+            let y = col[0].max(col[1]);
+            out.push(Placed { id, x: 0.0, y, w, h });
+            col = [y + h + gap; 2];
+            continue;
+        }
+        let c = if col[0] <= col[1] + 0.5 { 0 } else { 1 };
+        let x0 = c as f32 * (half_w + gap);
+        let y = col[c];
+        if pair {
+            let qw = (half_w - gap) / 2.0;
+            let (h1, h2) = (card_height(ctx, ids[0]), card_height(ctx, ids[1]));
+            out.push(Placed { id: ids[0], x: x0, y, w: qw, h: h1 });
+            out.push(Placed { id: ids[1], x: x0 + qw + gap, y, w: qw, h: h2 });
+            col[c] = y + h1.max(h2) + gap;
+        } else {
+            let h = card_height(ctx, ids[0]);
+            out.push(Placed { id: ids[0], x: x0, y, w: half_w, h });
+            col[c] = y + h + gap;
+        }
+    }
+    let total = col[0].max(col[1]);
+    (out, total)
+}
+
+/// Draws the cards at their laid-out positions. Positions tween smoothly, so reordering
+/// (for example during a drag) slides the other cards into their new places.
+/// Returns the drawn rectangle of each card.
+pub fn masonry(ui: &mut Ui, items: &[(u8, Span)], mut f: impl FnMut(&mut Ui, u8)) -> Vec<(u8, Rect)> {
+    let w = ui.available_width();
+    let ctx = ui.ctx().clone();
+    let (placed, total) = dash_layout(&ctx, items, w);
     let (outer, _) = ui.allocate_exact_size(vec2(w, total.max(60.0)), Sense::hover());
+    let mut rects = Vec::new();
     let mut changed = false;
-    for (id, x, y, sc) in placed {
-        let cw = col_w * sc as f32 + gap * (sc as f32 - 1.0);
-        let rect = Rect::from_min_size(outer.min + vec2(x, y), vec2(cw, 20000.0));
+    for p in placed {
+        let ax = ctx.animate_value_with_time(egui::Id::new(("cx", p.id)), p.x, 0.16);
+        let ay = ctx.animate_value_with_time(egui::Id::new(("cy", p.id)), p.y, 0.16);
+        let aw = ctx.animate_value_with_time(egui::Id::new(("cw", p.id)), p.w, 0.16);
+        let rect = Rect::from_min_size(outer.min + vec2(ax, ay), vec2(aw, 20000.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
-        child.set_width(cw);
-        f(&mut child, id);
+        child.set_width(aw);
+        f(&mut child, p.id);
         let h = child.min_rect().height();
-        if (h - height(id)).abs() > 1.0 {
+        if (h - card_height(&ctx, p.id)).abs() > 1.0 {
             changed = true;
         }
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("card_h", id)), h));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("card_h", p.id)), h));
+        rects.push((p.id, Rect::from_min_size(outer.min + vec2(ax, ay), vec2(aw, h))));
     }
     if changed {
         ctx.request_repaint();
     }
+    rects
 }
 
 // ---------------------------------------------------------------------------------------------
