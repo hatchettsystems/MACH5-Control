@@ -249,6 +249,11 @@ pub fn glyph(p: &Painter, name: &str, c: Pos2, col: Color32, rot: f32) {
             ln(c, o(4.5, -4.5));
             p.circle_filled(c, 1.4, col);
         }
+        "home" => {
+            ln(o(-6.0, -1.0), o(0.0, -7.0));
+            ln(o(0.0, -7.0), o(6.0, -1.0));
+            p.rect_stroke(R::from_center_size(o(0.0, 2.5), vec2(8.0, 6.0)), 0.5, s, StrokeKind::Middle);
+        }
         "gantry" => {
             ln(o(-8.0, -6.0), o(8.0, -6.0));
             ln(o(-8.0, -6.0), o(-8.0, 7.0));

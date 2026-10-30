@@ -624,7 +624,7 @@ pub fn plot(ui: &mut Ui, h: f32, series: &[Series], x: (f32, f32), y: (f32, f32)
         }
     }
     let mut lx = inner.left() + 6.0;
-    for s in series {
+    for s in series.iter().filter(|s| !s.name.is_empty()) {
         let g = p.text(egui::pos2(lx, inner.top() + 2.0), Align2::LEFT_TOP, &s.name, FontId::monospace(10.0), s.col);
         lx += g.width() + 14.0;
     }
@@ -853,18 +853,7 @@ pub fn info_card(ui: &mut Ui, title: &str, fields: &[(&str, String)]) {
     });
 }
 
-/// Button with a fixed size, in the standard accent style (for jog pads).
-pub fn btn_sized(ui: &mut Ui, t: &str, size: egui::Vec2) -> bool {
-    with_button_style(ui, false, |ui| ui.add(Button::new(RichText::new(t).color(WHITE).size(14.0)).min_size(size)).clicked())
-}
 
-/// Small choice button: solid accent when selected.
-pub fn choice(ui: &mut Ui, selected: bool, t: &str) -> bool {
-    with_button_style(ui, selected, |ui| {
-        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
-        ui.add(Button::new(RichText::new(t).size(12.5).color(if selected { Color32::from_rgb(4, 14, 22) } else { WHITE })).min_size(vec2(0.0, 26.0))).clicked()
-    })
-}
 
 /// Labelled `- value +` stepper with decimals, used in dense parameter grids.
 pub fn param(ui: &mut Ui, label: &str, v: &mut f32, range: (f32, f32), step: f32, dec: usize, unit: &str) -> bool {
@@ -938,4 +927,248 @@ pub fn masonry(ui: &mut Ui, items: &[(u8, Span)], mut f: impl FnMut(&mut Ui, u8)
     if changed {
         ctx.request_repaint();
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Jog dial: concentric step rings split into four wedges (X-, Y+, X+, Y-), corner home badges,
+// and a vertical Z strip with a motors-off button in the middle.
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Jog {
+    Move(usize, f32),
+    HomeX,
+    HomeY,
+    HomeZ,
+    HomeAll,
+    HomeXY,
+    MotorsOff,
+}
+
+const RINGS: [f32; 4] = [1.0, 10.0, 50.0, 100.0];
+const ZSTEPS: [f32; 4] = [0.1, 1.0, 10.0, 50.0];
+
+fn annular(p: &egui::Painter, c: egui::Pos2, r_in: f32, r_out: f32, a0: f32, a1: f32, fill: Color32, stroke: Stroke) {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
+    let n = 20;
+    let mut mesh = Mesh::default();
+    let mut outline = Vec::new();
+    for k in 0..=n {
+        let a = a0 + (a1 - a0) * k as f32 / n as f32;
+        let d = vec2(a.cos(), a.sin());
+        mesh.vertices.push(Vertex { pos: c + d * r_in, uv: WHITE_UV, color: fill });
+        mesh.vertices.push(Vertex { pos: c + d * r_out, uv: WHITE_UV, color: fill });
+    }
+    for k in 0..n as u32 {
+        let i = k * 2;
+        mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i + 1, i + 3, i + 2]);
+    }
+    p.add(Shape::mesh(mesh));
+    for k in 0..=n {
+        let a = a0 + (a1 - a0) * k as f32 / n as f32;
+        outline.push(c + vec2(a.cos(), a.sin()) * r_out);
+    }
+    p.add(Shape::line(outline, stroke));
+}
+
+fn corner_badge(p: &egui::Painter, rect: Rect, corner: usize, label: &str, hot: bool) {
+    // right-angle triangle hugging a square corner
+    let s = rect.width();
+    let (a, b, c) = match corner {
+        0 => (rect.left_top(), rect.left_top() + vec2(s, 0.0), rect.left_top() + vec2(0.0, s)),
+        1 => (rect.right_top(), rect.right_top() - vec2(s, 0.0), rect.right_top() + vec2(0.0, s)),
+        2 => (rect.left_bottom(), rect.left_bottom() + vec2(s, 0.0), rect.left_bottom() - vec2(0.0, s)),
+        _ => (rect.right_bottom(), rect.right_bottom() - vec2(s, 0.0), rect.right_bottom() - vec2(0.0, s)),
+    };
+    let col = if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT };
+    p.add(Shape::convex_polygon(vec![a, b, c], col, Stroke::NONE));
+    let centroid = egui::pos2((a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0);
+    crate::icons::glyph(p, "home", centroid - vec2(0.0, 5.0), Color32::from_rgb(4, 14, 22), 0.0);
+    p.text(centroid + vec2(0.0, 8.0), Align2::CENTER_CENTER, label, FontId::monospace(10.0), Color32::from_rgb(4, 14, 22));
+}
+
+/// Returns the action clicked this frame, if any.
+pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
+    let zw = (side * 0.22).clamp(44.0, 60.0);
+    let gap = 14.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(side + gap + zw, side), Sense::click());
+    let pad = Rect::from_min_size(rect.min, vec2(side, side));
+    let zr = Rect::from_min_size(rect.min + vec2(side + gap, 0.0), vec2(zw, side));
+    let p = ui.painter_at(rect);
+    let hover = resp.hover_pos();
+    let click = if resp.clicked() { resp.interact_pointer_pos() } else { None };
+    let mut action = None;
+    let hot_fill = Color32::from_rgb(24, 66, 96);
+    let base = Color32::from_rgb(20, 22, 27);
+    let line = Stroke::new(1.0_f32, Color32::from_rgb(52, 56, 66));
+
+    // --- circular pad ---
+    let c = pad.center();
+    let rr = side / 2.0;
+    let r0 = rr * 0.22;
+    let bounds = [r0, rr * 0.42, rr * 0.62, rr * 0.82, rr];
+    p.circle_filled(c, rr, Color32::from_rgb(12, 13, 16));
+    // wedge angles (screen coords, y down): right -45..45, bottom 45..135, left 135..225, top 225..315
+    let wedges: [(usize, f32, f32, f32, &str); 4] = [
+        (1, 1.0, 225.0, 315.0, "Y+"),
+        (0, 1.0, -45.0, 45.0, "X+"),
+        (1, -1.0, 45.0, 135.0, "Y-"),
+        (0, -1.0, 135.0, 225.0, "X-"),
+    ];
+    let hover_cell: Option<(usize, usize)> = hover.and_then(|h| {
+        let d = h - c;
+        let r = d.length();
+        if r < bounds[0] || r > rr {
+            return None;
+        }
+        let ring = (0..4).find(|i| r >= bounds[*i] && r <= bounds[*i + 1])?;
+        let wedge = if d.y.abs() > d.x.abs() { if d.y < 0.0 { 0 } else { 2 } } else if d.x > 0.0 { 1 } else { 3 };
+        Some((wedge, ring))
+    });
+    for (wi, (_, _, a0, a1, _)) in wedges.iter().enumerate() {
+        for ring in 0..4 {
+            let hot = hover_cell == Some((wi, ring));
+            let shade = 30 + ring as u8 * 7;
+            let fill = if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 5) };
+            let gap_deg = 3.2_f32;
+            annular(&p, c, bounds[ring] + 1.0, bounds[ring + 1] - 1.0, (a0 + gap_deg).to_radians(), (a1 - gap_deg).to_radians(), fill, if hot { Stroke::new(1.5_f32, ACCENT) } else { line });
+        }
+    }
+    // ring step labels along the top wedge
+    for (ring, s) in RINGS.iter().enumerate() {
+        let r = (bounds[ring] + bounds[ring + 1]) / 2.0;
+        p.text(c + vec2(0.0, -r), Align2::CENTER_CENTER, format!("{}", s), FontId::proportional(side * 0.058), Color32::from_gray(150));
+    }
+    // centre: home XY
+    let centre_hot = hover.map_or(false, |h| (h - c).length() < bounds[0] - 1.0);
+    p.circle_filled(c, bounds[0] - 1.0, if centre_hot { hot_fill } else { base });
+    p.circle_stroke(c, bounds[0] - 1.0, if centre_hot { Stroke::new(1.5_f32, ACCENT) } else { line });
+    crate::icons::glyph(&p, "home", c - vec2(0.0, 4.0), if centre_hot { WHITE } else { Color32::from_gray(150) }, 0.0);
+    p.text(c + vec2(0.0, 11.0), Align2::CENTER_CENTER, "XY", FontId::monospace(9.0), Color32::from_gray(150));
+
+    // corner badges
+    let bs = side * 0.2;
+    let corners = [(0usize, "X", Jog::HomeX), (1, "Y", Jog::HomeY), (2, "ALL", Jog::HomeAll), (3, "Z", Jog::HomeZ)];
+    let badge_rect = |k: usize| -> Rect { match k { 0 => Rect::from_min_size(pad.left_top(), vec2(bs, bs)), 1 => Rect::from_min_size(pad.right_top() - vec2(bs, 0.0), vec2(bs, bs)), 2 => Rect::from_min_size(pad.left_bottom() - vec2(0.0, bs), vec2(bs, bs)), _ => Rect::from_min_size(pad.right_bottom() - vec2(bs, bs), vec2(bs, bs)) } };
+    for (k, label, jog) in corners {
+        let r = badge_rect(k);
+        let hot = hover.map_or(false, |h| r.contains(h) && match k { 0 => (h.x - r.left()) + (h.y - r.top()) < bs, 1 => (r.right() - h.x) + (h.y - r.top()) < bs, 2 => (h.x - r.left()) + (r.bottom() - h.y) < bs, _ => (r.right() - h.x) + (r.bottom() - h.y) < bs });
+        corner_badge(&p, r, k, label, hot);
+        if hot && click.is_some() { action = Some(jog); }
+    }
+
+    // --- Z strip ---
+    let seg_h = (zr.height() - zw) / 8.0;
+    let mid = zr.center().y;
+    let z_cells: Vec<(Rect, f32, String)> = (0..8).map(|i| {
+        if i < 4 {
+            let y0 = zr.top() + i as f32 * seg_h;
+            (Rect::from_min_size(egui::pos2(zr.left(), y0), vec2(zw, seg_h)), ZSTEPS[3 - i], format!("{}", ZSTEPS[3 - i]))
+        } else {
+            let k = i - 4;
+            let y0 = mid + zw / 2.0 + k as f32 * seg_h;
+            (Rect::from_min_size(egui::pos2(zr.left(), y0), vec2(zw, seg_h)), -ZSTEPS[k], format!("{}", ZSTEPS[k]))
+        }
+    }).collect();
+    for (i, (r, delta, label)) in z_cells.iter().enumerate() {
+        let hot = hover.map_or(false, |h| r.contains(h));
+        let shade = 36 - (if i < 4 { (3 - i) as u8 } else { i as u8 - 4 }) * 3;
+        p.rect_filled(r.shrink(1.0), 4.0, if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 5) });
+        p.rect_stroke(r.shrink(1.0), 4.0, if hot { Stroke::new(1.5_f32, ACCENT) } else { line }, StrokeKind::Inside);
+        p.text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(side * 0.054), Color32::from_gray(150));
+        if hot && click.is_some() { action = Some(Jog::Move(2, *delta)); }
+    }
+    let zc = zr.center();
+    let off_hot = hover.map_or(false, |h| (h - zc).length() < zw / 2.0);
+    p.circle_filled(zc, zw / 2.0 - 1.0, if off_hot { Color32::from_rgb(130, 218, 255) } else { ACCENT });
+    p.text(zc, Align2::CENTER_CENTER, "OFF", FontId::monospace(10.5), Color32::from_rgb(4, 14, 22));
+    if off_hot && click.is_some() { action = Some(Jog::MotorsOff); }
+    p.text(egui::pos2(zr.center().x, zr.top() - 1.0), Align2::CENTER_BOTTOM, "Z", FontId::monospace(10.0), DIM);
+
+    // click handling for the circular pad
+    if let (Some(pt), None) = (click, action) {
+        if pad.contains(pt) {
+            let d = pt - c;
+            let r = d.length();
+            if r < bounds[0] {
+                action = Some(Jog::HomeXY);
+            } else if r <= rr {
+                if let Some(ring) = (0..4).find(|i| r >= bounds[*i] && r <= bounds[*i + 1]) {
+                    let step = RINGS[ring];
+                    let wedge = if d.y.abs() > d.x.abs() { if d.y < 0.0 { 0 } else { 2 } } else if d.x > 0.0 { 1 } else { 3 };
+                    let (axis, sign, _, _, _) = wedges[wedge];
+                    action = Some(Jog::Move(axis, sign * step));
+                }
+            }
+        }
+    }
+    if let Some(h) = hover_cell {
+        let (axis_lbl, step) = (wedges[h.0].4, RINGS[h.1]);
+        resp.on_hover_text(format!("{} {} mm", axis_lbl, step));
+    }
+    action
+}
+
+// ---------------------------------------------------------------------------------------------
+// Spool illustration
+
+pub fn filament_rgb(name: &str) -> Color32 {
+    match name.to_lowercase().as_str() {
+        "black" => Color32::from_rgb(34, 36, 40),
+        "white" => Color32::from_rgb(232, 232, 228),
+        "grey" | "gray" => Color32::from_rgb(132, 136, 142),
+        "red" => Color32::from_rgb(214, 52, 52),
+        "natural" => Color32::from_rgb(228, 210, 168),
+        "galaxy black" => Color32::from_rgb(52, 40, 92),
+        "blue" => Color32::from_rgb(46, 104, 226),
+        "orange" => Color32::from_rgb(240, 132, 32),
+        "green" => Color32::from_rgb(52, 178, 92),
+        "yellow" => Color32::from_rgb(244, 208, 48),
+        _ => Color32::from_rgb(150, 154, 160),
+    }
+}
+
+pub fn on_color(c: Color32) -> Color32 {
+    let l = 0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32;
+    if l > 150.0 { Color32::from_rgb(12, 14, 18) } else { Color32::WHITE }
+}
+
+/// A spool seen from the front: dark flanges, filament wound to `frac` of the capacity, hub and spokes.
+pub fn draw_spool(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32, frac: f32) {
+    p.circle_filled(c, r, Color32::from_rgb(26, 28, 33));
+    p.circle_stroke(c, r, Stroke::new(1.5_f32, Color32::from_rgb(70, 74, 84)));
+    let r_hub = r * 0.30;
+    let r_max = r * 0.90;
+    let r_w = r_hub + (r_max - r_hub) * frac.clamp(0.04, 1.0).sqrt();
+    p.circle_filled(c, r_w, col);
+    // winding texture: concentric darker / lighter rings
+    let ring = |k: f32| Color32::from_rgba_unmultiplied(0, 0, 0, (28.0 + 20.0 * k) as u8);
+    let mut rad = r_hub + 3.0;
+    let mut i = 0;
+    while rad < r_w - 1.0 {
+        p.circle_stroke(c, rad, Stroke::new(1.0_f32, if i % 2 == 0 { ring(0.0) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 16) }));
+        rad += 3.2;
+        i += 1;
+    }
+    p.circle_stroke(c, r_w, Stroke::new(1.5_f32, if on_color(col) == Color32::WHITE { Color32::from_rgba_unmultiplied(255, 255, 255, 60) } else { Color32::from_rgba_unmultiplied(0, 0, 0, 90) }));
+    // hub with spoke cut-outs
+    p.circle_filled(c, r_hub, Color32::from_rgb(40, 43, 50));
+    for k in 0..3 {
+        let a = k as f32 * std::f32::consts::TAU / 3.0 - std::f32::consts::FRAC_PI_2;
+        let cc = c + vec2(a.cos(), a.sin()) * r_hub * 0.58;
+        p.circle_filled(cc, r_hub * 0.26, Color32::from_rgb(12, 13, 16));
+    }
+    p.circle_filled(c, r_hub * 0.2, Color32::from_rgb(12, 13, 16));
+    p.circle_stroke(c, r_hub, Stroke::new(1.0_f32, Color32::from_rgb(70, 74, 84)));
+    // highlight on the flange
+    p.add(Shape::line((0..14).map(|k| { let a = -2.5 + k as f32 * 0.07; c + vec2(a.cos(), a.sin()) * (r - 3.0) }).collect(), Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 26))));
+}
+
+/// Info chip tinted with the filament colour.
+pub fn color_chip(ui: &mut Ui, text: &str, col: Color32) {
+    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::monospace(12.0), on_color(col));
+    let size = galley.size() + vec2(18.0, 8.0);
+    let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_filled(r, 11.0, col);
+    ui.painter().rect_stroke(r, 11.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 50)), StrokeKind::Inside);
+    ui.painter().galley(r.center() - galley.size() / 2.0, galley, on_color(col));
 }

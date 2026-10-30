@@ -235,8 +235,9 @@ const C_SEL: egui::Color32 = egui::Color32::from_rgb(44, 44, 44);
 /// Small status marker next to nav entries that need attention.
 fn nav_alert(m: &Model, p: Page) -> Option<(Status, &'static str)> {
     match p {
-        Page::Nodes | Page::Firmware if m.nodes.iter().any(|n| n.fw != n.want) => Some((Status::Warn, "out of date")),
-        Page::Nodes if m.nodes.iter().any(|n| n.status == Status::Err) => Some((Status::Err, "fault")),
+        Page::Firmware if m.nodes.iter().any(|n| n.fw != n.want) => Some((Status::Warn, "out of date")),
+        Page::CanBus if m.nodes.iter().any(|n| n.status == Status::Err) => Some((Status::Err, "fault")),
+        Page::CanBus if m.nodes.iter().any(|n| n.status == Status::Warn) => Some((Status::Warn, "node warning")),
         Page::Dashboard if m.state == data::MState::Fault => Some((Status::Err, "fault")),
         Page::Fleet if m.alerts.iter().any(|a| !a.ack && a.sev == data::Sev::Err) => Some((Status::Err, "alerts")),
         Page::Fleet if m.alerts.iter().any(|a| !a.ack && a.sev == data::Sev::Warn) => Some((Status::Warn, "alerts")),

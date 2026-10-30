@@ -198,37 +198,48 @@ fn p_camera(ui: &mut Ui, m: &mut Model, h: f32) {
     });
 }
 
-fn p_filament(ui: &mut Ui, m: &mut Model, h: f32) {
-    panel_min(ui, "Filament", h, |ui| {
+fn p_filament(ui: &mut Ui, m: &mut Model, _h: f32) {
+    panel(ui, "Filament", |ui| {
         let act = m.active;
         let sp = m.loaded(act).first().map(|&i| m.fspools[i].clone());
-        match sp {
+        let sp = match sp {
+            Some(s) => s,
             None => {
                 status(ui, Status::Warn, "No spool loaded");
                 ui.label(dim("Assign a spool from Fleet or Spool Inventory."));
                 ui.add_space(6.0);
                 if button(ui, "Open Spool Inventory") { m.goto = Some(Page::Spools); }
+                return;
             }
-            Some(sp) => {
-                ui.horizontal(|ui| { status(ui, Status::Ok, "Filament present"); ui.label(dim("T0 selected")); });
-                ui.add_space(4.0);
-                tiles_min(ui, &[
-                    ("Spool", crate::spools::code(sp.id)),
-                    ("Material", format!("{} {}", sp.mat, sp.color)),
-                    ("Remaining", format!("{:.0} g (~{:.0} m)", sp.left, crate::spools::length_m(&sp.mat, sp.dia, sp.left))),
-                    ("Nozzle", format!("{:.1} mm", m.fleet[act].nozzle)),
-                ], 104.0);
-                accent_bar(ui, sp.left / sp.net.max(1.0), ui.available_width());
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    let ok = m.heaters[0].cur > 170.0;
-                    if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
-                    if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
-                    if button(ui, "Load") { run_cmd(m, "LOAD_FILAMENT"); }
-                    if button(ui, "Unload") { run_cmd(m, "UNLOAD_FILAMENT"); }
-                });
-            }
-        }
+        };
+        let col = filament_rgb(&sp.color);
+        let frac = sp.left / sp.net.max(1.0);
+        ui.horizontal(|ui| {
+            status(ui, Status::Ok, "Loaded");
+            ui.label(dim("T0"));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| { color_chip(ui, &sp.mat, col); });
+        });
+        ui.add_space(4.0);
+        let r = (ui.available_width() * 0.36).clamp(46.0, 70.0);
+        ui.vertical_centered(|ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(r * 2.0 + 6.0, r * 2.0 + 6.0), Sense::hover());
+            draw_spool(&ui.painter_at(rect), rect.center(), r, col, frac);
+            ui.label(RichText::new(format!("{} {}", sp.brand, sp.color)).size(13.5).strong().color(WHITE));
+            ui.label(mono(format!("{:.0} g left  -  {:.0} %", sp.left, frac * 100.0)).size(12.0).color(DIM));
+        });
+        ui.add_space(6.0);
+        tiles_min(ui, &[
+            ("Spool", crate::spools::code(sp.id)),
+            ("Remaining", format!("~{:.0} m", crate::spools::length_m(&sp.mat, sp.dia, sp.left))),
+            ("Diameter", format!("{:.2} mm", sp.dia)),
+            ("Nozzle", format!("{:.1} mm", m.fleet[act].nozzle)),
+        ], 92.0);
+        accent_bar(ui, frac, ui.available_width());
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if button(ui, "Load") { run_cmd(m, "LOAD_FILAMENT"); }
+            if button(ui, "Unload") { run_cmd(m, "UNLOAD_FILAMENT"); }
+        });
     });
 }
 
@@ -463,10 +474,10 @@ fn p_temps(ui: &mut Ui, m: &mut Model) {
         let hi = m.h_hot.iter().chain(m.h_t_hot.iter()).cloned().fold(100.0_f32, f32::max);
         let top = ((hi * 1.1) / 50.0).ceil() * 50.0;
         plot(ui, 190.0, &[
-            Series::from_ring("hotend", SENS_HOT, &m.h_hot).filled(),
-            Series::from_ring("target", SENS_HOT, &m.h_t_hot).dashed(),
-            Series::from_ring("bed", SENS_BED, &m.h_bed).filled(),
-            Series::from_ring("chamber", SENS_CHAM, &m.h_cham).filled(),
+            Series::from_ring("", SENS_HOT, &m.h_hot).filled(),
+            Series::from_ring("", SENS_HOT, &m.h_t_hot).dashed(),
+            Series::from_ring("", SENS_BED, &m.h_bed).filled(),
+            Series::from_ring("", SENS_CHAM, &m.h_cham).filled(),
         ], (0.0, HIST as f32), (0.0, top), "deg C  -  last 60 s");
         ui.add_space(8.0);
         heater_row(ui, m, 0, "thermo", SENS_HOT);
@@ -490,53 +501,34 @@ fn p_move(ui: &mut Ui, m: &mut Model) {
             ("Z", format!("{:.2}", m.pos[2])),
             ("E", format!("{:.1}", m.pos[3])),
         ], 74.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Step (mm)"));
-            let steps = [0.1_f32, 1.0, 10.0, 50.0, 100.0];
-            for (k, s) in steps.iter().enumerate() {
-                if choice(ui, m.st.step == k, &format!("{}", s)) { m.st.step = k; }
+        ui.add_space(4.0);
+        let side = (ui.available_width() - 80.0).clamp(170.0, 250.0);
+        let act = ui.vertical_centered(|ui| jog_pad(ui, side)).inner;
+        match act {
+            Some(Jog::Move(axis, d)) => {
+                let lim = [350.0, 350.0, 330.0][axis];
+                m.pos[axis] = (m.pos[axis] + d).clamp(0.0, lim);
             }
-        });
+            Some(Jog::HomeX) => { m.pos[0] = 0.0; m.home[0] = true; }
+            Some(Jog::HomeY) => { m.pos[1] = 0.0; m.home[1] = true; }
+            Some(Jog::HomeZ) => { m.pos[2] = 0.0; m.home[2] = true; }
+            Some(Jog::HomeXY) => { m.pos[0] = 0.0; m.pos[1] = 0.0; m.home[0] = true; m.home[1] = true; }
+            Some(Jog::HomeAll) => { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
+            Some(Jog::MotorsOff) => { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
+            None => {}
+        }
         ui.add_space(6.0);
-        let st = [0.1_f32, 1.0, 10.0, 50.0, 100.0][m.st.step.min(4)];
-        let bs = vec2(54.0, 40.0);
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-                ui.horizontal(|ui| { ui.add_space(bs.x + 4.0); if btn_sized(ui, "Y+", bs) { m.pos[1] += st; } });
-                ui.horizontal(|ui| {
-                    if btn_sized(ui, "X-", bs) { m.pos[0] -= st; }
-                    if btn_sized(ui, "Home", bs) { m.pos[0] = 0.0; m.pos[1] = 0.0; m.home[0] = true; m.home[1] = true; }
-                    if btn_sized(ui, "X+", bs) { m.pos[0] += st; }
-                });
-                ui.horizontal(|ui| { ui.add_space(bs.x + 4.0); if btn_sized(ui, "Y-", bs) { m.pos[1] -= st; } });
-            });
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-                if btn_sized(ui, "Z+", bs) { m.pos[2] += st; }
-                if btn_sized(ui, "Home Z", bs) { m.pos[2] = 0.0; m.home[2] = true; }
-                if btn_sized(ui, "Z-", bs) { m.pos[2] -= st; }
-            });
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
-                if button(ui, "Home all") { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
-                if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
-                if button(ui, "Motors off") { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
-            });
-        });
-        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(dim("Extruder"));
             stepper(ui, &mut m.st.extr_len, (1.0, 200.0), 5.0, " mm");
             let ok = m.heaters[0].cur > 170.0;
             if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
             if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
-            if !ok { ui.label(dim("hotend below 170 C")); }
+            if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
         });
         ui.horizontal_wrapped(|ui| {
-            status(ui, if m.home.iter().all(|h| *h) { Status::Ok } else { Status::Warn }, if m.home.iter().all(|h| *h) { "X Y Z homed" } else { "not homed" });
+            status(ui, if m.home.iter().all(|h| *h) { Status::Ok } else { Status::Warn }, if m.home.iter().all(|h| *h) { "X Y Z homed" } else { "not homed - use the corner badges" });
+            if !m.heaters[0].cur.gt(&170.0) { ui.label(dim("hotend below 170 C: extrusion locked")); }
         });
     });
 }

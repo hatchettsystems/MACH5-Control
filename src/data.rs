@@ -16,36 +16,37 @@ pub enum Page {
 }
 
 impl Page {
-    /// Sidebar entries. Each one is a hub that holds related pages as tabs.
+    /// Sidebar entries (12). A few of them stack closely related pages as sections.
     pub const GROUPS: &'static [(&'static str, &'static [Page])] = &[
-        ("Machine", &[Page::Dashboard, Page::Print, Page::Motion]),
+        ("Machine", &[Page::Dashboard, Page::Print, Page::Camera]),
+        ("Tuning", &[Page::Motion, Page::Calibration]),
         ("Materials", &[Page::Spools]),
-        ("Hardware", &[Page::CanBus]),
-        ("System", &[Page::Fleet, Page::Builder, Page::Api]),
+        ("Hardware", &[Page::CanBus, Page::Firmware]),
+        ("System", &[Page::Fleet, Page::Builder, Page::Api, Page::Logs]),
     ];
 
-    /// The sidebar hub this page lives under.
+    /// The sidebar entry this page lives under.
     pub fn hub(self) -> Page {
         match self {
-            Page::Camera => Page::Print,
-            Page::Thermal | Page::Calibration | Page::Probe | Page::Drives => Page::Motion,
+            Page::Thermal | Page::Drives => Page::Motion,
+            Page::Probe => Page::Calibration,
             Page::Materials => Page::Spools,
-            Page::Nodes | Page::Firmware => Page::CanBus,
+            Page::Nodes => Page::CanBus,
             Page::Config | Page::Rules => Page::Builder,
-            Page::Simulator | Page::Logs | Page::Spec => Page::Api,
+            Page::Simulator | Page::Spec => Page::Api,
             p => p,
         }
     }
 
-    /// Tabs shown inside a hub page: (page, tab label). Empty for stand-alone pages.
+    /// Sections stacked on a merged page: (page, heading). Empty for single-section pages.
     pub fn tabs(self) -> &'static [(Page, &'static str)] {
         match self {
-            Page::Print => &[(Page::Print, "Jobs"), (Page::Camera, "Camera")],
-            Page::Motion => &[(Page::Motion, "Motion"), (Page::Thermal, "Thermal"), (Page::Calibration, "Calibration"), (Page::Probe, "Eddy probe"), (Page::Drives, "Drives")],
+            Page::Motion => &[(Page::Motion, "Motion"), (Page::Thermal, "Heaters"), (Page::Drives, "Drives")],
+            Page::Calibration => &[(Page::Calibration, "Calibration"), (Page::Probe, "Eddy probe")],
             Page::Spools => &[(Page::Spools, "Spool inventory"), (Page::Materials, "MMU and profiles")],
-            Page::CanBus => &[(Page::CanBus, "CAN FD bus"), (Page::Nodes, "Nodes"), (Page::Firmware, "Firmware")],
+            Page::CanBus => &[(Page::CanBus, "CAN FD bus"), (Page::Nodes, "Nodes")],
             Page::Builder => &[(Page::Builder, "Config builder"), (Page::Config, "Typed editor"), (Page::Rules, "Rules")],
-            Page::Api => &[(Page::Api, "API and security"), (Page::Simulator, "Simulator"), (Page::Logs, "Event log"), (Page::Spec, "Spec and roadmap")],
+            Page::Api => &[(Page::Api, "API and security"), (Page::Simulator, "Simulator"), (Page::Spec, "Spec and roadmap")],
             _ => &[],
         }
     }
@@ -64,15 +65,16 @@ impl Page {
 
     pub fn hub_blurb(self) -> &'static str {
         match self {
-            Page::Print => "Files, queue, object exclusion, power-loss recovery and the camera",
-            Page::Motion => "Planner, heaters, calibration, eddy probe and drives",
-            Page::Spools => "Shared spool database, labels, tracking, MMU and filament profiles",
-            Page::CanBus => "Two CAN FD segments, every node and signed firmware",
+            Page::Motion => "Planner, input shaping, pressure advance, heater control and drives",
+            Page::Calibration => "Auto-calibration, mesh, leveling, resonance and the eddy probe",
+            Page::Spools => "Shared spool database, labels and tracking, MMU and filament profiles",
+            Page::CanBus => "Two CAN FD segments and every node on them",
             Page::Builder => "Block-based machine config, the typed editor and the rules engine",
-            Page::Api => "Clients and keys, simulator, event log and the spec",
+            Page::Api => "Clients and keys, simulator and the spec",
             _ => "",
         }
     }
+
     pub fn title(self) -> &'static str {
         match self {
             Page::Dashboard => "Dashboard", Page::Print => "Print",
