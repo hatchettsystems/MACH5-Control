@@ -1409,7 +1409,10 @@ pub fn pick(ui: &mut Ui, id: &str, label: &str, opts: &[&str], cur: &mut usize) 
     let text = if label.is_empty() { opts[(*cur).min(opts.len() - 1)].to_string() } else { format!("{}: {}", label, opts[(*cur).min(opts.len() - 1)]) };
     with_button_style(ui, BK::Secondary, |ui| {
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
-        egui::ComboBox::from_id_salt(id).selected_text(text).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(id).selected_text(text).icon(|ui, rect, visuals, _open, _sel| {
+            let c = rect.center();
+            ui.painter().add(Shape::convex_polygon(vec![c + vec2(-4.5, -2.5), c + vec2(4.5, -2.5), c + vec2(0.0, 3.0)], visuals.fg_stroke.color, Stroke::NONE));
+        }).show_ui(ui, |ui| {
             for (i, n) in opts.iter().enumerate() {
                 ui.selectable_value(cur, i, *n);
             }
@@ -1423,7 +1426,8 @@ pub fn menu_pick(ui: &mut Ui, label: &str, items: &[&str]) -> Option<usize> {
     let mut chosen = None;
     with_button_style(ui, BK::Secondary, |ui| {
         ui.spacing_mut().button_padding = vec2(10.0, 3.0);
-        ui.menu_button(format!("{}  v", label), |ui| {
+        // trailing spaces reserve room for the painted arrow
+        let r = ui.menu_button(format!("{}    ", label), |ui| {
             for (i, n) in items.iter().enumerate() {
                 if ui.button(*n).clicked() {
                     chosen = Some(i);
@@ -1431,6 +1435,10 @@ pub fn menu_pick(ui: &mut Ui, label: &str, items: &[&str]) -> Option<usize> {
                 }
             }
         });
+        let rect = r.response.rect;
+        let c = egui::pos2(rect.right() - 13.0, rect.center().y + 0.5);
+        let col = if r.response.hovered() { WHITE } else { Color32::from_gray(190) };
+        ui.painter().add(Shape::convex_polygon(vec![c + vec2(-4.5, -2.5), c + vec2(4.5, -2.5), c + vec2(0.0, 3.0)], col, Stroke::NONE));
     });
     chosen
 }
