@@ -6,9 +6,9 @@ use std::collections::VecDeque;
 
 pub const HIST: usize = 240;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Page {
-    Dashboard, Control, Print, Thermal,
+    Dashboard, Print, Thermal,
     Motion, Calibration, Probe, Drives,
     Materials, Spools, Camera,
     CanBus, Nodes, Firmware,
@@ -16,16 +16,66 @@ pub enum Page {
 }
 
 impl Page {
+    /// Sidebar entries. Each one is a hub that holds related pages as tabs.
     pub const GROUPS: &'static [(&'static str, &'static [Page])] = &[
-        ("Machine", &[Page::Dashboard, Page::Control, Page::Print, Page::Thermal]),
-        ("Tuning", &[Page::Motion, Page::Calibration, Page::Probe, Page::Drives]),
-        ("Materials", &[Page::Materials, Page::Spools, Page::Camera]),
-        ("Hardware", &[Page::CanBus, Page::Nodes, Page::Firmware]),
-        ("System", &[Page::Fleet, Page::Builder, Page::Config, Page::Rules, Page::Api, Page::Simulator, Page::Logs, Page::Spec]),
+        ("Machine", &[Page::Dashboard, Page::Print, Page::Motion]),
+        ("Materials", &[Page::Spools]),
+        ("Hardware", &[Page::CanBus]),
+        ("System", &[Page::Fleet, Page::Builder, Page::Api]),
     ];
+
+    /// The sidebar hub this page lives under.
+    pub fn hub(self) -> Page {
+        match self {
+            Page::Camera => Page::Print,
+            Page::Thermal | Page::Calibration | Page::Probe | Page::Drives => Page::Motion,
+            Page::Materials => Page::Spools,
+            Page::Nodes | Page::Firmware => Page::CanBus,
+            Page::Config | Page::Rules => Page::Builder,
+            Page::Simulator | Page::Logs | Page::Spec => Page::Api,
+            p => p,
+        }
+    }
+
+    /// Tabs shown inside a hub page: (page, tab label). Empty for stand-alone pages.
+    pub fn tabs(self) -> &'static [(Page, &'static str)] {
+        match self {
+            Page::Print => &[(Page::Print, "Jobs"), (Page::Camera, "Camera")],
+            Page::Motion => &[(Page::Motion, "Motion"), (Page::Thermal, "Thermal"), (Page::Calibration, "Calibration"), (Page::Probe, "Eddy probe"), (Page::Drives, "Drives")],
+            Page::Spools => &[(Page::Spools, "Spool inventory"), (Page::Materials, "MMU and profiles")],
+            Page::CanBus => &[(Page::CanBus, "CAN FD bus"), (Page::Nodes, "Nodes"), (Page::Firmware, "Firmware")],
+            Page::Builder => &[(Page::Builder, "Config builder"), (Page::Config, "Typed editor"), (Page::Rules, "Rules")],
+            Page::Api => &[(Page::Api, "API and security"), (Page::Simulator, "Simulator"), (Page::Logs, "Event log"), (Page::Spec, "Spec and roadmap")],
+            _ => &[],
+        }
+    }
+
+    /// Name shown in the sidebar and top bar.
+    pub fn nav_title(self) -> &'static str {
+        match self {
+            Page::Motion => "Tuning",
+            Page::Spools => "Filament",
+            Page::CanBus => "Hardware",
+            Page::Builder => "Config",
+            Page::Api => "System",
+            p => p.title(),
+        }
+    }
+
+    pub fn hub_blurb(self) -> &'static str {
+        match self {
+            Page::Print => "Files, queue, object exclusion, power-loss recovery and the camera",
+            Page::Motion => "Planner, heaters, calibration, eddy probe and drives",
+            Page::Spools => "Shared spool database, labels, tracking, MMU and filament profiles",
+            Page::CanBus => "Two CAN FD segments, every node and signed firmware",
+            Page::Builder => "Block-based machine config, the typed editor and the rules engine",
+            Page::Api => "Clients and keys, simulator, event log and the spec",
+            _ => "",
+        }
+    }
     pub fn title(self) -> &'static str {
         match self {
-            Page::Dashboard => "Dashboard", Page::Control => "Control", Page::Print => "Print",
+            Page::Dashboard => "Dashboard", Page::Print => "Print",
             Page::Thermal => "Thermal", Page::Motion => "Motion", Page::Calibration => "Calibration",
             Page::Probe => "Eddy Probe", Page::Drives => "Drives", Page::Materials => "Filament", Page::Spools => "Spool Inventory",
             Page::Camera => "Camera", Page::CanBus => "CAN FD Bus", Page::Nodes => "Nodes",
@@ -36,7 +86,7 @@ impl Page {
     }
     pub fn key(self) -> &'static str {
         match self {
-            Page::Dashboard => "01", Page::Control => "02", Page::Print => "03", Page::Thermal => "04",
+            Page::Dashboard => "01", Page::Print => "03", Page::Thermal => "04",
             Page::Motion => "05", Page::Calibration => "06", Page::Probe => "07", Page::Drives => "08",
             Page::Materials => "09", Page::Camera => "10", Page::CanBus => "11", Page::Nodes => "12",
             Page::Firmware => "13", Page::Fleet => "14", Page::Config => "15", Page::Rules => "16", Page::Api => "17",
@@ -294,6 +344,7 @@ pub struct Model {
     pub rollout: Rollout,
     pub bld: crate::builder::Builder,
     pub dash_order: Vec<u8>,
+    pub hub_sel: std::collections::HashMap<Page, Page>,
     pub active: usize,
     pub queue: Vec<QJob>,
     pub next_qid: u32,
@@ -483,6 +534,7 @@ impl Model {
             decisions: [false; 8], phases_done: 1,
             bld: crate::builder::Builder::new(),
             dash_order: load_dash_order(),
+            hub_sel: std::collections::HashMap::new(),
             rollout: Rollout { wave: 0, prog: 0.0, running: false, halted: None, done: false },
             active: 0, queue: Vec::new(), next_qid: 1, auto_dispatch: false, auto_pause: true,
             alerts: Vec::new(), fspools: Vec::new(), next_spool: 1,
@@ -785,7 +837,7 @@ fn config_sections() -> Vec<Section> {
     ]
 }
 
-pub const DASH_CARDS: usize = 15;
+pub const DASH_CARDS: usize = 14;
 
 pub fn default_dash_order() -> Vec<u8> {
     (0..DASH_CARDS as u8).collect()

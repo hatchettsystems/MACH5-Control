@@ -13,13 +13,6 @@ pub fn draw(p: &Painter, page: Page, c: Pos2, col: Color32) {
                 sq(o(dx, dy), 2.6);
             }
         }
-        Page::Control => {
-            p.circle_stroke(c, 3.2, s);
-            ln(o(-7.0, 0.0), o(-4.0, 0.0));
-            ln(o(4.0, 0.0), o(7.0, 0.0));
-            ln(o(0.0, -7.0), o(0.0, -4.0));
-            ln(o(0.0, 4.0), o(0.0, 7.0));
-        }
         Page::Print => {
             ln(o(-4.0, -5.0), o(4.0, -5.0));
             ln(o(-5.5, -1.0), o(5.5, -1.0));

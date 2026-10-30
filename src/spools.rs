@@ -31,16 +31,6 @@ pub fn length_m(mat: &str, dia: f32, g: f32) -> f32 {
     let area_cm2 = std::f32::consts::PI * (dia / 20.0).powi(2);
     g / (density(mat) * area_cm2 * 100.0)
 }
-pub fn profile_for(mat: &str) -> usize {
-    match mat {
-        "PLA" => 0,
-        "PETG" => 1,
-        "ASA" | "ABS" => 2,
-        "PA-CF" | "PA12-CF" | "PA6" | "PC" => 3,
-        "TPU" => 4,
-        _ => 0,
-    }
-}
 pub fn hygroscopic(mat: &str) -> bool {
     matches!(mat, "PA-CF" | "PA12-CF" | "PA6" | "TPU" | "PVA" | "PETG" | "PC")
 }

@@ -360,8 +360,8 @@ const FEATURES: [(&str, &str, &str, Page); 12] = [
 
 pub fn spec(ui: &mut Ui, m: &mut Model) {
     title(ui, "Spec & Roadmap", "MACH5 Ecosystem: Spec & Design Plan - 2026-10-28");
-    tabs(ui, &mut m.st.tab, &["Roadmap", "Feature coverage", "Principles", "Architecture", "Open decisions"]);
-    match m.st.tab {
+    tabs(ui, &mut m.st.tab2, &["Roadmap", "Feature coverage", "Principles", "Architecture", "Open decisions"]);
+    match m.st.tab2 {
         0 => panel(ui, "Roadmap - each phase ends in a gate that must pass before the next starts", |ui| {
         let rows = [
                     ("0. Spec freeze", "Requirements doc, CAN FD protocol spec, config schema, API schema, node classes, safety case", "Review sign-off; every feature has an owner and an interface"),

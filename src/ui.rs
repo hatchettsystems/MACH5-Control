@@ -108,6 +108,13 @@ pub fn dim(s: impl Into<String>) -> RichText {
 }
 
 pub fn title(ui: &mut Ui, t: &str, sub: &str) {
+    let in_hub = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("in_hub"))).unwrap_or(false);
+    if in_hub {
+        // The hub already shows the page title and tabs; keep only the page's description.
+        ui.label(dim(sub));
+        ui.add_space(6.0);
+        return;
+    }
     ui.label(RichText::new(t).size(20.0).strong().color(WHITE));
     ui.label(dim(sub));
     ui.add_space(6.0);
@@ -345,6 +352,7 @@ fn with_button_style<R>(ui: &mut Ui, primary: bool, f: impl FnOnce(&mut Ui) -> R
 }
 
 /// Main action: solid accent fill, dark text, sized to its label.
+
 pub fn primary(ui: &mut Ui, t: &str) -> bool {
     with_button_style(ui, true, |ui| ui.add(Button::new(RichText::new(t).color(Color32::from_rgb(4, 14, 22)).strong()).min_size(vec2(0.0, 32.0))).clicked())
 }
@@ -549,13 +557,19 @@ pub struct Series {
     pub col: Color32,
     pub pts: Vec<[f32; 2]>,
     pub dashed: bool,
+    pub fill: bool,
 }
 impl Series {
     pub fn new(name: &str, col: Color32, pts: Vec<[f32; 2]>) -> Self {
-        Self { name: name.into(), col, pts, dashed: false }
+        Self { name: name.into(), col, pts, dashed: false, fill: false }
     }
     pub fn dashed(mut self) -> Self {
         self.dashed = true;
+        self
+    }
+    /// Soft gradient shading under the curve, like Mainsail.
+    pub fn filled(mut self) -> Self {
+        self.fill = true;
         self
     }
     pub fn from_ring(name: &str, col: Color32, d: &std::collections::VecDeque<f32>) -> Self {
@@ -563,12 +577,18 @@ impl Series {
     }
 }
 
+/// One colour per sensor, deliberately unrelated to the accent.
+pub const SENS_HOT: Color32 = Color32::from_rgb(255, 143, 64);
+pub const SENS_BED: Color32 = Color32::from_rgb(176, 112, 255);
+pub const SENS_CHAM: Color32 = Color32::from_rgb(52, 214, 160);
+
 pub fn plot(ui: &mut Ui, h: f32, series: &[Series], x: (f32, f32), y: (f32, f32), unit: &str) {
+    use egui::epaint::{Mesh, Vertex, WHITE_UV};
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let p = ui.painter_at(r);
-    p.rect_filled(r, crate::theme::RAD, Color32::BLACK);
-    p.rect_stroke(r, crate::theme::RAD, Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
+    p.rect_filled(r, 4.0, Color32::from_rgb(6, 7, 9));
+    p.rect_stroke(r, 4.0, Stroke::new(1.0_f32, LINE), StrokeKind::Inside);
     let inner = Rect::from_min_max(r.min + vec2(44.0, 8.0), r.max - vec2(8.0, 8.0));
     let fy = |v: f32| inner.bottom() - (v - y.0) / (y.1 - y.0).max(1e-6) * inner.height();
     let fx = |v: f32| inner.left() + (v - x.0) / (x.1 - x.0).max(1e-6) * inner.width();
@@ -576,7 +596,7 @@ pub fn plot(ui: &mut Ui, h: f32, series: &[Series], x: (f32, f32), y: (f32, f32)
     for i in 0..=4 {
         let v = y.0 + (y.1 - y.0) * i as f32 / 4.0;
         let yy = fy(v);
-        p.line_segment([egui::pos2(inner.left(), yy), egui::pos2(inner.right(), yy)], Stroke::new(1.0_f32, Color32::from_gray(28)));
+        p.line_segment([egui::pos2(inner.left(), yy), egui::pos2(inner.right(), yy)], Stroke::new(1.0_f32, Color32::from_gray(26)));
         p.text(egui::pos2(inner.left() - 4.0, yy), Align2::RIGHT_CENTER, if span < 0.5 { format!("{:.3}", v) } else if span < 5.0 { format!("{:.2}", v) } else if span < 50.0 { format!("{:.1}", v) } else { format!("{:.0}", v) }, FontId::monospace(10.0), DIM);
     }
     for s in series {
@@ -584,10 +604,23 @@ pub fn plot(ui: &mut Ui, h: f32, series: &[Series], x: (f32, f32), y: (f32, f32)
         if pts.len() < 2 {
             continue;
         }
+        if s.fill {
+            let mut mesh = Mesh::default();
+            let (top, bot) = (Color32::from_rgba_unmultiplied(s.col.r(), s.col.g(), s.col.b(), 34), Color32::from_rgba_unmultiplied(s.col.r(), s.col.g(), s.col.b(), 0));
+            for q in &pts {
+                mesh.vertices.push(Vertex { pos: *q, uv: WHITE_UV, color: top });
+                mesh.vertices.push(Vertex { pos: egui::pos2(q.x, inner.bottom()), uv: WHITE_UV, color: bot });
+            }
+            for i in 0..pts.len() as u32 - 1 {
+                let k = i * 2;
+                mesh.indices.extend_from_slice(&[k, k + 1, k + 2, k + 1, k + 3, k + 2]);
+            }
+            p.add(Shape::mesh(mesh));
+        }
         if s.dashed {
-            p.extend(Shape::dashed_line(&pts, Stroke::new(1.0_f32, s.col), 4.0, 3.0));
+            p.extend(Shape::dashed_line(&pts, Stroke::new(1.0_f32, s.col.gamma_multiply(0.7)), 4.0, 3.0));
         } else {
-            p.add(Shape::line(pts, Stroke::new(1.3_f32, s.col)));
+            p.add(Shape::line(pts, Stroke::new(1.8_f32, s.col)));
         }
     }
     let mut lx = inner.left() + 6.0;
@@ -765,36 +798,6 @@ pub fn console_job(line: &str) -> egui::text::LayoutJob {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Span { Full, Half, Quarter }
 
-/// Flow layout: cards sit left to right at natural height and wrap onto new rows.
-/// On narrow windows quarter cards become half width and half cards become full width.
-pub struct Flow<'a> {
-    ui: &'a mut Ui,
-    w: f32,
-}
-impl Flow<'_> {
-    pub fn card(&mut self, span: Span, f: impl FnOnce(&mut Ui)) {
-        let gap = 8.0;
-        let w = self.w;
-        let eff = if w < 560.0 { Span::Full } else if w < 1000.0 { if span == Span::Quarter { Span::Half } else { span } } else { span };
-        let cw = match eff {
-            Span::Full => w,
-            Span::Half => (w - gap) / 2.0,
-            Span::Quarter => (w - 3.0 * gap) / 4.0,
-        } - 2.0;
-        self.ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(cw);
-            f(ui);
-        });
-    }
-}
-pub fn flow(ui: &mut Ui, f: impl FnOnce(&mut Flow)) {
-    let w = ui.available_width();
-    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
-        ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
-        let mut fl = Flow { ui, w };
-        f(&mut fl);
-    });
-}
 
 /// A card with a thin border; the border takes the accent colour when `selected`.
 pub fn card_frame(ui: &mut Ui, w: f32, selected: bool, f: impl FnOnce(&mut Ui)) {
@@ -848,4 +851,91 @@ pub fn info_card(ui: &mut Ui, title: &str, fields: &[(&str, String)]) {
             });
         }
     });
+}
+
+/// Button with a fixed size, in the standard accent style (for jog pads).
+pub fn btn_sized(ui: &mut Ui, t: &str, size: egui::Vec2) -> bool {
+    with_button_style(ui, false, |ui| ui.add(Button::new(RichText::new(t).color(WHITE).size(14.0)).min_size(size)).clicked())
+}
+
+/// Small choice button: solid accent when selected.
+pub fn choice(ui: &mut Ui, selected: bool, t: &str) -> bool {
+    with_button_style(ui, selected, |ui| {
+        ui.spacing_mut().button_padding = vec2(10.0, 3.0);
+        ui.add(Button::new(RichText::new(t).size(12.5).color(if selected { Color32::from_rgb(4, 14, 22) } else { WHITE })).min_size(vec2(0.0, 26.0))).clicked()
+    })
+}
+
+/// Labelled `- value +` stepper with decimals, used in dense parameter grids.
+pub fn param(ui: &mut Ui, label: &str, v: &mut f32, range: (f32, f32), step: f32, dec: usize, unit: &str) -> bool {
+    let mut ch = false;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.label(dim(label));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().button_padding = vec2(0.0, 0.0);
+            if ui.add(Button::new(RichText::new("-").size(15.0)).min_size(vec2(28.0, 28.0))).clicked() { *v = (*v - step).max(range.0); ch = true; }
+            let (r, _) = ui.allocate_exact_size(vec2(84.0, 28.0), Sense::hover());
+            ui.painter().rect_filled(r, 7.0, INSET);
+            ui.painter().rect_stroke(r, 7.0, Stroke::new(1.0_f32, CARD_LINE), StrokeKind::Inside);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, format!("{:.*}{}", dec, v, unit), FontId::monospace(12.5), WHITE);
+            if ui.add(Button::new(RichText::new("+").size(15.0)).min_size(vec2(28.0, 28.0))).clicked() { *v = (*v + step).min(range.1); ch = true; }
+        });
+    });
+    ch
+}
+
+/// Masonry layout: cards (of Full / Half / Quarter width) are packed into the highest free
+/// space on a 4, 2 or 1 column grid, so short cards never leave gaps.
+pub fn masonry(ui: &mut Ui, items: &[(u8, Span)], mut f: impl FnMut(&mut Ui, u8)) {
+    let gap = 8.0;
+    let w = ui.available_width();
+    let n: usize = if w >= 1060.0 { 4 } else if w >= 560.0 { 2 } else { 1 };
+    let col_w = (w - gap * (n as f32 - 1.0)) / n as f32;
+    let ctx = ui.ctx().clone();
+    let height = |id: u8| -> f32 { ctx.data(|d| d.get_temp::<f32>(egui::Id::new(("card_h", id)))).unwrap_or(380.0) };
+    let cols_of = |s: Span| -> usize {
+        match (n, s) {
+            (4, Span::Full) => 4,
+            (4, Span::Half) => 2,
+            (2, Span::Full) => 2,
+            _ => 1,
+        }
+    };
+    let mut col_h = vec![0.0_f32; n];
+    let mut placed: Vec<(u8, f32, f32, usize)> = Vec::new(); // id, x, y, span cols
+    for (id, span) in items {
+        let sc = cols_of(*span);
+        let mut best = (0usize, f32::MAX);
+        for x in 0..=(n - sc) {
+            let y = col_h[x..x + sc].iter().cloned().fold(0.0_f32, f32::max);
+            if y < best.1 - 0.5 {
+                best = (x, y);
+            }
+        }
+        let h = height(*id);
+        for c in col_h.iter_mut().skip(best.0).take(sc) {
+            *c = best.1 + h;
+        }
+        placed.push((*id, best.0 as f32 * (col_w + gap), best.1, sc));
+    }
+    let total = col_h.iter().cloned().fold(0.0_f32, f32::max);
+    let (outer, _) = ui.allocate_exact_size(vec2(w, total.max(60.0)), Sense::hover());
+    let mut changed = false;
+    for (id, x, y, sc) in placed {
+        let cw = col_w * sc as f32 + gap * (sc as f32 - 1.0);
+        let rect = Rect::from_min_size(outer.min + vec2(x, y), vec2(cw, 20000.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        child.set_width(cw);
+        f(&mut child, id);
+        let h = child.min_rect().height();
+        if (h - height(id)).abs() > 1.0 {
+            changed = true;
+        }
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("card_h", id)), h));
+    }
+    if changed {
+        ctx.request_repaint();
+    }
 }

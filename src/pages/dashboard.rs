@@ -29,62 +29,41 @@ fn mini(ui: &mut Ui, w: f32, left: impl FnOnce(&mut Ui), right: &str) {
     });
 }
 
-fn limit_row(ui: &mut Ui, glyph: &str, label: &str, value: String, frac: f32) {
-    row_card(ui, |ui| {
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-            crate::icons::glyph(&ui.painter().clone(), glyph, r.center(), Color32::from_gray(190), 0.0);
-            ui.label(RichText::new(label).size(13.5).color(TEXT));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                Frame::new().fill(INSET).stroke(Stroke::new(1.0_f32, CARD_LINE)).corner_radius(6).inner_margin(Margin::symmetric(9, 3)).show(ui, |ui| {
-                    ui.label(mono(value).size(13.0).color(WHITE));
-                });
-            });
-        });
-        ui.add_space(3.0);
-        accent_bar(ui, frac, ui.available_width());
-    });
-}
 
 /// (title, span) per dashboard card id; the order shown is `Model::dash_order`.
 const CARD_INFO: [(&str, Span); DASH_CARDS] = [
-    ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Quick controls", Span::Half),
-    ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half), ("Motion system", Span::Half),
-    ("Limits and tuning", Span::Half), ("Toolhead", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half),
-    ("Console", Span::Full), ("Print history", Span::Half), ("Recent events", Span::Half),
+    ("Printer status", Span::Half), ("Camera", Span::Half), ("Temperatures", Span::Half), ("Movement", Span::Half),
+    ("Print parameters", Span::Half), ("Filament", Span::Quarter), ("Power and system", Span::Quarter), ("Fans and outputs", Span::Half),
+    ("Motion system", Span::Half), ("Bed mesh", Span::Half), ("Node health", Span::Half), ("Console", Span::Full),
+    ("Print history", Span::Half), ("Recent events", Span::Half),
 ];
 
 pub fn dashboard(ui: &mut Ui, m: &mut Model) {
     title(ui, "Dashboard", &format!("{} - live telemetry, mock data", m.name));
     ui.horizontal_wrapped(|ui| {
-        ui.label(dim("Drag a card by its header to rearrange the dashboard. The layout is saved."));
+        ui.label(dim("Drag a card by its header to rearrange. Cards pack together automatically and the layout is saved."));
         if sbtn(ui, "Reset layout").clicked() { m.dash_order = default_dash_order(); save_dash_order(&m.dash_order); }
     });
     ui.add_space(6.0);
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("card_rects"), Vec::<(u8, egui::Rect)>::new()));
-    let order = m.dash_order.clone();
-    flow(ui, |f| {
-        for id in order {
-            f.card(CARD_INFO[id as usize].1, |ui| {
-                set_card(ui.ctx(), id);
-                match id {
-                    0 => p_status(ui, m, 0.0),
-                    1 => p_camera(ui, m, 0.0),
-                    2 => p_temps(ui, m, 0.0),
-                    3 => p_quick(ui, m, 0.0),
-                    4 => p_filament(ui, m, 0.0),
-                    5 => p_power(ui, m, 0.0),
-                    6 => p_fans(ui, m, 0.0),
-                    7 => p_motion(ui, m, 0.0),
-                    8 => p_limits(ui, m, 0.0),
-                    9 => p_toolhead(ui, m, 0.0),
-                    10 => p_mesh(ui, m, 0.0),
-                    11 => p_nodes(ui, m, 0.0),
-                    12 => p_console(ui, m, 520.0),
-                    13 => p_history(ui, m, 0.0),
-                    _ => p_events(ui, m, 0.0),
-                }
-            });
+    let items: Vec<(u8, Span)> = m.dash_order.iter().map(|&id| (id, CARD_INFO[id as usize].1)).collect();
+    masonry(ui, &items, |ui, id| {
+        set_card(ui.ctx(), id);
+        match id {
+            0 => p_status(ui, m, 0.0),
+            1 => p_camera(ui, m, 0.0),
+            2 => p_temps(ui, m),
+            3 => p_move(ui, m),
+            4 => p_params(ui, m),
+            5 => p_filament(ui, m, 0.0),
+            6 => p_power(ui, m, 0.0),
+            7 => p_fans(ui, m, 0.0),
+            8 => p_motion(ui, m, 0.0),
+            9 => p_mesh(ui, m, 0.0),
+            10 => p_nodes(ui, m, 0.0),
+            11 => p_console(ui, m, 520.0),
+            12 => p_history(ui, m, 0.0),
+            _ => p_events(ui, m, 0.0),
         }
     });
     handle_drag(ui, m);
@@ -100,7 +79,8 @@ fn drop_target(rects: &[(u8, egui::Rect)], src: u8, p: egui::Pos2) -> Option<(u8
     let left = rects.iter().map(|(_, r)| r.left()).fold(f32::MAX, f32::min);
     let right = rects.iter().map(|(_, r)| r.right()).fold(f32::MIN, f32::max);
     let full_width = r.width() > (right - left) * 0.9;
-    let after = if full_width || p.y < r.top() || p.y > r.bottom() { p.y > r.center().y } else { p.x > r.center().x };
+    let in_x = p.x >= r.left() && p.x <= r.right();
+    let after = if full_width || in_x { p.y > r.center().y } else { p.x > r.center().x };
     Some((best.0, r, after))
 }
 
@@ -196,19 +176,7 @@ fn p_status(ui: &mut Ui, m: &mut Model, h: f32) {
             ("Flow rate", format!("{:.1} mm3/s", flow_rate)),
         ], 120.0);
         ui.add_space(6.0);
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                state_actions(ui, m);
-                ui.add_space(8.0);
-                ui.label(dim("Live Z offset"));
-                let mut z = m.z_offset * 1000.0;
-                if stepper(ui, &mut z, (-2000.0, 2000.0), 10.0, " um") { m.z_offset = z / 1000.0; }
-            });
-            ui.add_space(12.0);
-            let rot = t * m.job.speed / 100.0 * 4.0;
-            dial(ui, &mut m.job.speed, (20.0, 300.0), "Speed", "gauge", rot, "%");
-            dial(ui, &mut m.job.flow, (80.0, 120.0), "Flow", "drop", 0.0, "%");
-        });
+        state_actions(ui, m);
     });
 }
 
@@ -226,48 +194,6 @@ fn p_camera(ui: &mut Ui, m: &mut Model, h: f32) {
         ui.horizontal(|ui| {
             if button(ui, "Snapshot") { m.log(Sev::Info, "camera", "Snapshot saved"); }
             if button(ui, "Open camera") { m.goto = Some(Page::Camera); }
-        });
-    });
-}
-
-fn p_temps(ui: &mut Ui, m: &mut Model, h: f32) {
-    panel_min(ui, "Temperatures", h, |ui| {
-        plot(ui, 250.0, &[
-            Series::from_ring("nozzle", ACCENT, &m.h_hot),
-            Series::from_ring("target", G3, &m.h_t_hot).dashed(),
-            Series::from_ring("bed", G1, &m.h_bed),
-            Series::from_ring("chamber", G2, &m.h_cham),
-        ], (0.0, HIST as f32), (0.0, 300.0), "deg C  -  last 60 s");
-    });
-}
-
-fn p_quick(ui: &mut Ui, m: &mut Model, h: f32) {
-    panel_min(ui, "Quick controls", h, |ui| {
-        for (k, glyph) in ["thermo", "bed", "cube"].iter().enumerate() {
-            row_card(ui, |ui| {
-                ui.horizontal(|ui| {
-                    icon_box(ui, glyph);
-                    ui.label(RichText::new(m.heaters[k].name).size(14.5).strong().color(WHITE));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(mono(format!("{:.1} C", m.heaters[k].cur)).size(16.0).color(WHITE));
-                        ui.label(dim("Current"));
-                    });
-                });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    let max = m.heaters[k].max;
-                    stepper(ui, &mut m.heaters[k].target, (0.0, max), 5.0, " C");
-                    ui.add_space(4.0);
-                    if button(ui, "OFF") { m.heaters[k].target = 0.0; }
-                    ui.label(dim("Target"));
-                });
-            });
-        }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Preset"));
-            for p in m.profiles.iter() {
-                if sbtn(ui, p.name).clicked() { m.heaters[0].target = p.nozzle; m.heaters[1].target = p.bed; m.heaters[2].target = p.chamber; }
-            }
         });
     });
 }
@@ -364,38 +290,6 @@ fn p_motion(ui: &mut Ui, m: &mut Model, h: f32) {
                 });
             });
         }
-    });
-}
-
-fn p_limits(ui: &mut Ui, m: &mut Model, h: f32) {
-    panel_min(ui, "Limits and tuning", h, |ui| {
-        limit_row(ui, "gauge", "Velocity", format!("{:.0} mm/s", m.vmax), m.vmax / 1500.0);
-        limit_row(ui, "motion", "Accel X / Y / Z", format!("{:.0} / {:.0} / {:.0}", m.accel[0], m.accel[1], m.accel[2]), m.accel[0] / 20000.0);
-        limit_row(ui, "hash", "Max jerk", format!("{:.0} mm/s3", m.jerk), m.jerk / 200000.0);
-        limit_row(ui, "list", "Shapers X / Y", format!("{} {:.0} / {} {:.0} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq, SHAPERS[m.shapers[1].kind], m.shapers[1].freq), 0.5);
-        limit_row(ui, "drop", "Pressure advance", format!("{:.3} s", m.pa_value), m.pa_value / 0.2);
-        if button(ui, "Open motion") { m.goto = Some(Page::Motion); }
-    });
-}
-
-fn p_toolhead(ui: &mut Ui, m: &mut Model, h: f32) {
-    let tf = m.t as f32;
-    let vel = |s: f32| if m.state == MState::Printing { 180.0 * (0.55 + 0.45 * (s * 0.9).sin().abs()) } else { 0.0 };
-    panel_min(ui, "Toolhead", h, |ui| {
-        tiles_min(ui, &[
-            ("X", format!("{:.2}", m.pos[0])),
-            ("Y", format!("{:.2}", m.pos[1])),
-            ("Z", format!("{:.2}", m.pos[2])),
-            ("E", format!("{:.1}", m.pos[3])),
-        ], 80.0);
-        let pts: Vec<[f32; 2]> = (0..120).map(|k| [k as f32, vel(tf - (120 - k) as f32 * 0.25)]).collect();
-        plot(ui, 110.0, &[Series::new("velocity", ACCENT, pts)], (0.0, 120.0), (0.0, 260.0), "mm/s");
-        ui.add_space(6.0);
-        tiles_min(ui, &[
-            ("Homed", if m.home.iter().all(|h| *h) { "X Y Z".into() } else { "not all".into() }),
-            ("Probe", format!("{:.1} C", 52.0 + (tf * 0.05).sin())),
-            ("Z offset", format!("{:+.3} mm", m.z_offset)),
-        ], 100.0);
     });
 }
 
@@ -539,5 +433,146 @@ fn p_events(ui: &mut Ui, m: &mut Model, h: f32) {
             ui.add_space(4.0);
         }
         if button(ui, "Open event log") { m.goto = Some(Page::Logs); }
+    });
+}
+
+fn heater_row(ui: &mut Ui, m: &mut Model, k: usize, glyph: &str, col: Color32) {
+    row_card(ui, |ui| {
+        ui.horizontal(|ui| {
+            icon_box(ui, glyph);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.label(RichText::new(m.heaters[k].name).size(13.5).strong().color(col));
+                ui.horizontal(|ui| {
+                    ui.label(mono(format!("{:.1} C", m.heaters[k].cur)).size(16.0).color(WHITE));
+                    bar(ui, m.heaters[k].power / 100.0, 46.0, None);
+                    ui.label(mono(format!("{:.0}%", m.heaters[k].power)).size(11.0).color(DIM));
+                });
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if button(ui, "OFF") { m.heaters[k].target = 0.0; }
+                let max = m.heaters[k].max;
+                stepper(ui, &mut m.heaters[k].target, (0.0, max), 5.0, " C");
+            });
+        });
+    });
+}
+
+fn p_temps(ui: &mut Ui, m: &mut Model) {
+    panel(ui, "Temperatures", |ui| {
+        let hi = m.h_hot.iter().chain(m.h_t_hot.iter()).cloned().fold(100.0_f32, f32::max);
+        let top = ((hi * 1.1) / 50.0).ceil() * 50.0;
+        plot(ui, 190.0, &[
+            Series::from_ring("hotend", SENS_HOT, &m.h_hot).filled(),
+            Series::from_ring("target", SENS_HOT, &m.h_t_hot).dashed(),
+            Series::from_ring("bed", SENS_BED, &m.h_bed).filled(),
+            Series::from_ring("chamber", SENS_CHAM, &m.h_cham).filled(),
+        ], (0.0, HIST as f32), (0.0, top), "deg C  -  last 60 s");
+        ui.add_space(8.0);
+        heater_row(ui, m, 0, "thermo", SENS_HOT);
+        heater_row(ui, m, 1, "bed", SENS_BED);
+        heater_row(ui, m, 2, "cube", SENS_CHAM);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(dim("Preset"));
+            for p in m.profiles.iter() {
+                if sbtn(ui, p.name).clicked() { m.heaters[0].target = p.nozzle; m.heaters[1].target = p.bed; m.heaters[2].target = p.chamber; }
+            }
+            if sbtn(ui, "All off").clicked() { for h in m.heaters.iter_mut() { h.target = 0.0; } }
+        });
+    });
+}
+
+fn p_move(ui: &mut Ui, m: &mut Model) {
+    panel(ui, "Movement", |ui| {
+        tiles_min(ui, &[
+            ("X", format!("{:.2}", m.pos[0])),
+            ("Y", format!("{:.2}", m.pos[1])),
+            ("Z", format!("{:.2}", m.pos[2])),
+            ("E", format!("{:.1}", m.pos[3])),
+        ], 74.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(dim("Step (mm)"));
+            let steps = [0.1_f32, 1.0, 10.0, 50.0, 100.0];
+            for (k, s) in steps.iter().enumerate() {
+                if choice(ui, m.st.step == k, &format!("{}", s)) { m.st.step = k; }
+            }
+        });
+        ui.add_space(6.0);
+        let st = [0.1_f32, 1.0, 10.0, 50.0, 100.0][m.st.step.min(4)];
+        let bs = vec2(54.0, 40.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                ui.horizontal(|ui| { ui.add_space(bs.x + 4.0); if btn_sized(ui, "Y+", bs) { m.pos[1] += st; } });
+                ui.horizontal(|ui| {
+                    if btn_sized(ui, "X-", bs) { m.pos[0] -= st; }
+                    if btn_sized(ui, "Home", bs) { m.pos[0] = 0.0; m.pos[1] = 0.0; m.home[0] = true; m.home[1] = true; }
+                    if btn_sized(ui, "X+", bs) { m.pos[0] += st; }
+                });
+                ui.horizontal(|ui| { ui.add_space(bs.x + 4.0); if btn_sized(ui, "Y-", bs) { m.pos[1] -= st; } });
+            });
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                if btn_sized(ui, "Z+", bs) { m.pos[2] += st; }
+                if btn_sized(ui, "Home Z", bs) { m.pos[2] = 0.0; m.home[2] = true; }
+                if btn_sized(ui, "Z-", bs) { m.pos[2] -= st; }
+            });
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
+                if button(ui, "Home all") { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
+                if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
+                if button(ui, "Motors off") { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
+            });
+        });
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(dim("Extruder"));
+            stepper(ui, &mut m.st.extr_len, (1.0, 200.0), 5.0, " mm");
+            let ok = m.heaters[0].cur > 170.0;
+            if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
+            if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
+            if !ok { ui.label(dim("hotend below 170 C")); }
+        });
+        ui.horizontal_wrapped(|ui| {
+            status(ui, if m.home.iter().all(|h| *h) { Status::Ok } else { Status::Warn }, if m.home.iter().all(|h| *h) { "X Y Z homed" } else { "not homed" });
+        });
+    });
+}
+
+fn p_params(ui: &mut Ui, m: &mut Model) {
+    panel(ui, "Print parameters", |ui| {
+        let gap = 10.0;
+        let avail = ui.available_width();
+        let n = (((avail + gap) / (150.0 + gap)).floor() as usize).clamp(1, 3);
+        let total = 9;
+        let mut jerk = m.jerk / 1000.0;
+        for row in 0..(total + n - 1) / n {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for col in 0..n {
+                    match row * n + col {
+                        0 => { param(ui, "Speed", &mut m.job.speed, (20.0, 300.0), 5.0, 0, " %"); }
+                        1 => { param(ui, "Flow", &mut m.job.flow, (80.0, 120.0), 1.0, 0, " %"); }
+                        2 => { param(ui, "Z offset", &mut m.z_offset, (-2.0, 2.0), 0.005, 3, " mm"); }
+                        3 => { param(ui, "Pressure advance", &mut m.pa_value, (0.0, 0.5), 0.002, 3, " s"); }
+                        4 => { param(ui, "PA smooth time", &mut m.pa_smooth, (0.0, 0.2), 0.005, 3, " s"); }
+                        5 => { param(ui, "Max velocity", &mut m.vmax, (10.0, 1500.0), 10.0, 0, " mm/s"); }
+                        6 => { if param(ui, "Max accel", &mut m.accel[0], (100.0, 40000.0), 100.0, 0, " mm/s2") { m.accel[1] = m.accel[0]; } }
+                        7 => { param(ui, "Max jerk", &mut jerk, (1.0, 1000.0), 5.0, 0, " k"); }
+                        8 => { param(ui, "Corner blend", &mut m.blend, (0.0, 1.0), 0.01, 2, " mm"); }
+                        _ => {}
+                    }
+                }
+            });
+            ui.add_space(8.0);
+        }
+        m.jerk = jerk * 1000.0;
+        tiles_min(ui, &[
+            ("Shaper X", format!("{} {:.1} Hz", SHAPERS[m.shapers[0].kind], m.shapers[0].freq)),
+            ("Shaper Y", format!("{} {:.1} Hz", SHAPERS[m.shapers[1].kind], m.shapers[1].freq)),
+        ], 130.0);
+        if button(ui, "Open tuning") { m.goto = Some(Page::Motion); }
     });
 }

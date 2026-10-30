@@ -7,8 +7,8 @@ const MMU_STATES: [&str; 6] = ["IDLE", "SELECT", "FEED", "LOADED", "RETRACT", "F
 
 pub fn filament(ui: &mut Ui, m: &mut Model) {
     title(ui, "Filament", "MMU node state machine, loaded spools and filament profiles. The spool database itself lives in Spool Inventory");
-    tabs(ui, &mut m.st.tab, &["MMU", "Profiles"]);
-    match m.st.tab {
+    tabs(ui, &mut m.st.tab2, &["MMU", "Profiles"]);
+    match m.st.tab2 {
         0 => {
             panel(ui, "MMU node (CAN FD B, 0x33)", |ui| {
                 ui.horizontal(|ui| {

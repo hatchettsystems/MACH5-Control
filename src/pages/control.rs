@@ -40,127 +40,6 @@ pub fn state_actions(ui: &mut Ui, m: &mut Model) {
 
 pub const SHAPERS: [&str; 5] = ["ZV", "MZV", "ZVD", "EI", "2HUMP_EI"];
 
-pub fn control(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Control", "Manual motion, temperatures, extrusion and console");
-    adaptive(ui, 2, |c| {
-        panel(c.at(0), "Jog", |ui| {
-            let steps = [0.1_f32, 1.0, 10.0, 50.0, 100.0];
-            ui.horizontal(|ui| {
-                ui.label(dim("Step (mm)"));
-                for (k, s) in steps.iter().enumerate() {
-                    if ui.selectable_label(m.st.step == k, format!("{}", s)).clicked() {
-                        m.st.step = k;
-                    }
-                }
-            });
-            let st = steps[m.st.step];
-            ui.add_space(6.0);
-            let bs = vec2(76.0, 34.0);
-            ui.horizontal(|ui| {
-                egui::Grid::new("jog_xy").spacing([4.0, 4.0]).show(ui, |ui| {
-                    ui.label("");
-                    if ui.add_sized(bs, egui::Button::new("Y+")).clicked() { m.pos[1] += st; }
-                    ui.label("");
-                    ui.end_row();
-                    if ui.add_sized(bs, egui::Button::new("X-")).clicked() { m.pos[0] -= st; }
-                    if ui.add_sized(bs, egui::Button::new("Home")).clicked() { m.pos[0] = 0.0; m.pos[1] = 0.0; m.home[0] = true; m.home[1] = true; }
-                    if ui.add_sized(bs, egui::Button::new("X+")).clicked() { m.pos[0] += st; }
-                    ui.end_row();
-                    ui.label("");
-                    if ui.add_sized(bs, egui::Button::new("Y-")).clicked() { m.pos[1] -= st; }
-                    ui.label("");
-                    ui.end_row();
-                });
-                ui.add_space(24.0);
-                egui::Grid::new("jog_z").spacing([4.0, 4.0]).show(ui, |ui| {
-                    if ui.add_sized(bs, egui::Button::new("Z+")).clicked() { m.pos[2] += st; }
-                    ui.end_row();
-                    if ui.add_sized(bs, egui::Button::new("Home Z")).clicked() { m.pos[2] = 0.0; m.home[2] = true; }
-                    ui.end_row();
-                    if ui.add_sized(bs, egui::Button::new("Z-")).clicked() { m.pos[2] -= st; }
-                    ui.end_row();
-                });
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if button(ui, "Home all") {
-                    m.pos[0] = 0.0; m.pos[1] = 0.0; m.pos[2] = 0.0;
-                    m.home = [true; 3];
-                    m.log(Sev::Info, "motion", "Homed X Y Z");
-                }
-                if button(ui, "Disable motors") {
-                    m.home = [false; 3];
-                    m.log(Sev::Info, "motion", "Drives disabled (EN low)");
-                }
-                if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
-            });
-            ui.add_space(4.0);
-            kv(ui, "ctl_pos", &[("X / Y / Z", format!("{:.2} / {:.2} / {:.2}", m.pos[0], m.pos[1], m.pos[2]))]);
-        });
-        panel(c.at(1), "Temperatures and extrusion", |ui| {
-            egui::Grid::new("ctl_temps").num_columns(4).spacing([14.0, 6.0]).show(ui, |ui| {
-                for h in m.heaters.iter_mut() {
-                    ui.label(dim(h.name));
-                    ui.label(mono(format!("{:.1}", h.cur)).color(WHITE));
-                    ui.add(DragValue::new(&mut h.target).range(0.0..=h.max).suffix(" C"));
-                    if crate::ui::sbtn(ui, "off").clicked() { h.target = 0.0; }
-                    ui.end_row();
-                }
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(dim("Preset"));
-                for p in m.profiles.iter() {
-                    if crate::ui::sbtn(ui, p.name).clicked() {
-                        m.heaters[0].target = p.nozzle;
-                        m.heaters[1].target = p.bed;
-                        m.heaters[2].target = p.chamber;
-                    }
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(dim("Length"));
-                ui.add(DragValue::new(&mut m.st.extr_len).range(1.0..=200.0).suffix(" mm"));
-                let ok = m.heaters[0].cur > 170.0;
-                ui.add_enabled_ui(ok, |ui| {
-                    if button(ui, "Extrude") { m.pos[3] += m.st.extr_len; }
-                    if button(ui, "Retract") { m.pos[3] -= m.st.extr_len; }
-                });
-                if !ok { ui.label(dim("hotend below 170 C")); }
-            });
-        });
-    });
-
-    panel(ui, "Macros", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            if button(ui, "Auto-calibrate") { m.goto = Some(Page::Calibration); }
-            if button(ui, "Load filament") { m.st.console.push("> LOAD_FILAMENT".into()); m.st.console.push("MMU: loading slot 1 ... ok".into()); }
-            if button(ui, "Unload filament") { m.st.console.push("> UNLOAD_FILAMENT".into()); m.st.console.push("MMU: unloading ... ok".into()); }
-            if button(ui, "Purge") { m.st.console.push("> PURGE (adaptive)".into()); m.st.console.push("ok".into()); }
-            if button(ui, "Cool down") { for h in m.heaters.iter_mut() { h.target = 0.0; } }
-        });
-        ui.label(dim("Macros are rules in the sandboxed engine, not shell commands."));
-    });
-
-    panel(ui, "Console", |ui| {
-        egui::ScrollArea::vertical().max_height(180.0).stick_to_bottom(true).auto_shrink([false, true]).show(ui, |ui| {
-            for l in &m.st.console {
-                ui.label(mono(l.clone()).color(if l.starts_with('>') { WHITE } else { DIM }));
-            }
-        });
-        ui.horizontal(|ui| {
-            let r = ui.add(egui::TextEdit::singleline(&mut m.st.cmd).desired_width(ui.available_width() - 70.0).font(FontId::monospace(12.5)).hint_text("G28, M104 S250, M140 S90, M112, HELP"));
-            let go = (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) || button(ui, "Send");
-            if go && !m.st.cmd.trim().is_empty() {
-                let cmd = std::mem::take(&mut m.st.cmd);
-                run_cmd(m, cmd.trim());
-                r.request_focus();
-            }
-        });
-    });
-}
-
 pub fn run_cmd(m: &mut Model, cmd: &str) {
     let cmd = cmd.trim();
     m.st.console.push(format!("> {}", cmd));
@@ -391,7 +270,7 @@ pub fn print(ui: &mut Ui, m: &mut Model) {
 }
 
 pub fn thermal(ui: &mut Ui, m: &mut Model) {
-    title(ui, "Thermal", "Heaters, fans, control mode and cutoff limits");
+    title(ui, "Thermal", "Heater control mode and cutoff limits. Live temperatures, presets and fans are on the Dashboard");
     panel(ui, "Heaters", |ui| {
         egui::Grid::new("heaters").num_columns(9).striped(true).spacing([16.0, 6.0]).show(ui, |ui| {
             for h in ["Name", "Node", "Current", "Target", "Output", "Control", "Max", "Watchdog", "State"] { th(ui, h); }
@@ -417,30 +296,6 @@ pub fn thermal(ui: &mut Ui, m: &mut Model) {
         ui.label(dim("A missing Host heartbeat cuts the heater locally on the node. Max temperature is enforced on the STM32 and the node, independent of the P4."));
         ui.horizontal(|ui| {
             for n in ["Auto-tune hotend", "Auto-tune bed", "Auto-tune chamber"] { button(ui, n); }
-        });
-    });
-    adaptive(ui, 2, |c| {
-        panel(c.at(0), "History", |ui| {
-            plot(ui, 220.0, &[
-                Series::from_ring("hotend", G1, &m.h_hot),
-                Series::from_ring("target", G3, &m.h_t_hot).dashed(),
-                Series::from_ring("bed", G2, &m.h_bed),
-                Series::from_ring("chamber", G3, &m.h_cham),
-            ], (0.0, HIST as f32), (0.0, 300.0), "deg C");
-        });
-        panel(c.at(1), "Fans", |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for f in m.fans.iter_mut() {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        knob(ui, &mut f.pct, (0.0, 100.0), f.name.split(' ').next().unwrap_or(f.name), "%", 0);
-                        ui.label(mono(format!("{:.0} rpm", f.rpm_max * f.pct / 100.0)).size(10.0).color(DIM));
-                        ui.label(dim(f.node).size(9.5));
-                    });
-                }
-            });
-            ui.add_space(4.0);
-            ui.label(dim("Drag a knob up or down. Shift for fine control."));
         });
     });
 }

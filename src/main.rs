@@ -69,6 +69,12 @@ impl eframe::App for App {
         if let Some(p) = self.m.goto.take() {
             self.page = p;
         }
+        // Pages that live under a hub open as a tab of that hub.
+        let hub = self.page.hub();
+        if self.page != hub {
+            self.m.hub_sel.insert(hub, self.page);
+            self.page = hub;
+        }
 
         paint_background(ctx);
         if ctx.input(|i| i.key_pressed(egui::Key::F1)) && self.tour.is_none() {
@@ -116,7 +122,7 @@ impl App {
                     let narrow = ctx.screen_rect().width() < 1150.0;
                     ui.label(RichText::new("MACH5").monospace().strong().size(15.0).color(WHITE));
                     ui.label(ui::dim("/"));
-                    ui.label(RichText::new(self.page.title()).color(TEXT));
+                    ui.label(RichText::new(self.page.nav_title()).color(TEXT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui::danger(ui, "E-STOP") {
                             self.m.estop();
@@ -182,12 +188,12 @@ impl App {
                     ui.painter().rect_filled(rect.shrink2(vec2(6.0, 0.0)), crate::theme::RAD, fill);
                     let col = if sel { WHITE } else { TEXT };
                     let icol = if sel { ACCENT } else if resp.hovered() { WHITE } else { DIM };
-                    let resp = if rail { resp.on_hover_text(p.title()) } else { resp };
+                    let resp = if rail { resp.on_hover_text(p.nav_title()) } else { resp };
                     if rail {
                         icons::draw(&ui.painter().clone(), *p, rect.center(), icol);
                     } else {
                         icons::draw(&ui.painter().clone(), *p, rect.left_center() + vec2(26.0, 0.0), icol);
-                        ui.painter().text(rect.left_center() + vec2(46.0, 0.0), egui::Align2::LEFT_CENTER, p.title(), egui::FontId::proportional(13.5), col);
+                        ui.painter().text(rect.left_center() + vec2(46.0, 0.0), egui::Align2::LEFT_CENTER, p.nav_title(), egui::FontId::proportional(13.5), col);
                     }
                     if let Some(a) = nav_alert(&self.m, *p) {
                         let (st, _) = a;
