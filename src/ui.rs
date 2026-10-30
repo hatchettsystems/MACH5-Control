@@ -970,26 +970,23 @@ fn annular(p: &egui::Painter, c: egui::Pos2, r_in: f32, r_out: f32, a0: f32, a1:
     p.add(Shape::line(outline, stroke));
 }
 
-fn corner_badge(p: &egui::Painter, rect: Rect, corner: usize, label: &str, hot: bool) {
-    // right-angle triangle hugging a square corner
-    let s = rect.width();
-    let (a, b, c) = match corner {
-        0 => (rect.left_top(), rect.left_top() + vec2(s, 0.0), rect.left_top() + vec2(0.0, s)),
-        1 => (rect.right_top(), rect.right_top() - vec2(s, 0.0), rect.right_top() + vec2(0.0, s)),
-        2 => (rect.left_bottom(), rect.left_bottom() + vec2(s, 0.0), rect.left_bottom() - vec2(0.0, s)),
-        _ => (rect.right_bottom(), rect.right_bottom() - vec2(s, 0.0), rect.right_bottom() - vec2(0.0, s)),
-    };
-    let col = if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT };
-    p.add(Shape::convex_polygon(vec![a, b, c], col, Stroke::NONE));
-    let centroid = egui::pos2((a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0);
-    crate::icons::glyph(p, "home", centroid - vec2(0.0, 5.0), Color32::from_rgb(4, 14, 22), 0.0);
-    p.text(centroid + vec2(0.0, 8.0), Align2::CENTER_CENTER, label, FontId::monospace(10.0), Color32::from_rgb(4, 14, 22));
+fn corner_badge(p: &egui::Painter, rect: Rect, label: &str, hot: bool) {
+    let fill = if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT };
+    p.rect_filled(rect, 8.0, fill);
+    let ink = Color32::from_rgb(4, 14, 22);
+    crate::icons::house(p, rect.center() - vec2(0.0, rect.height() * 0.12), rect.width() * 0.26, ink, fill);
+    p.text(rect.center() + vec2(0.0, rect.height() * 0.30), Align2::CENTER_CENTER, label, FontId::monospace((rect.height() * 0.26).clamp(8.0, 11.0)), ink);
+}
+
+fn chevron(p: &egui::Painter, c: egui::Pos2, dir: egui::Vec2, size: f32, col: Color32) {
+    let n = vec2(-dir.y, dir.x);
+    p.add(Shape::convex_polygon(vec![c + dir * size, c - dir * size * 0.6 + n * size * 0.9, c - dir * size * 0.6 - n * size * 0.9], col, Stroke::NONE));
 }
 
 /// Returns the action clicked this frame, if any.
 pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
-    let zw = (side * 0.22).clamp(44.0, 60.0);
-    let gap = 14.0;
+    let zw = (side * 0.2).clamp(40.0, 52.0);
+    let gap = 16.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(side + gap + zw, side), Sense::click());
     let pad = Rect::from_min_size(rect.min, vec2(side, side));
     let zr = Rect::from_min_size(rect.min + vec2(side + gap, 0.0), vec2(zw, side));
@@ -997,24 +994,24 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
     let hover = resp.hover_pos();
     let click = if resp.clicked() { resp.interact_pointer_pos() } else { None };
     let mut action = None;
-    let hot_fill = Color32::from_rgb(24, 66, 96);
-    let base = Color32::from_rgb(20, 22, 27);
-    let line = Stroke::new(1.0_f32, Color32::from_rgb(52, 56, 66));
+    let hot_fill = Color32::from_rgb(22, 72, 104);
+    let line = Stroke::new(1.0_f32, Color32::from_rgb(46, 50, 60));
+    let dim_txt = Color32::from_rgb(120, 128, 142);
 
-    // --- circular pad ---
+    // --- circular pad: 4 rings x 4 wedges ---
     let c = pad.center();
-    let rr = side / 2.0;
-    let r0 = rr * 0.22;
-    let bounds = [r0, rr * 0.42, rr * 0.62, rr * 0.82, rr];
-    p.circle_filled(c, rr, Color32::from_rgb(12, 13, 16));
-    // wedge angles (screen coords, y down): right -45..45, bottom 45..135, left 135..225, top 225..315
-    let wedges: [(usize, f32, f32, f32, &str); 4] = [
-        (1, 1.0, 225.0, 315.0, "Y+"),
-        (0, 1.0, -45.0, 45.0, "X+"),
-        (1, -1.0, 45.0, 135.0, "Y-"),
-        (0, -1.0, 135.0, 225.0, "X-"),
+    let rr = side / 2.0 - 1.0;
+    let r0 = rr * 0.26;
+    let bounds = [r0, rr * 0.46, rr * 0.64, rr * 0.82, rr];
+    p.circle_filled(c, rr + 1.0, Color32::from_rgb(10, 11, 14));
+    // (axis, sign, from deg, to deg, direction vector)
+    let wedges: [(usize, f32, f32, f32, egui::Vec2, &str); 4] = [
+        (1, 1.0, 225.0, 315.0, vec2(0.0, -1.0), "Y+"),
+        (0, 1.0, -45.0, 45.0, vec2(1.0, 0.0), "X+"),
+        (1, -1.0, 45.0, 135.0, vec2(0.0, 1.0), "Y-"),
+        (0, -1.0, 135.0, 225.0, vec2(-1.0, 0.0), "X-"),
     ];
-    let hover_cell: Option<(usize, usize)> = hover.and_then(|h| {
+    let cell_at = |h: egui::Pos2| -> Option<(usize, usize)> {
         let d = h - c;
         let r = d.length();
         if r < bounds[0] || r > rr {
@@ -1023,87 +1020,95 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
         let ring = (0..4).find(|i| r >= bounds[*i] && r <= bounds[*i + 1])?;
         let wedge = if d.y.abs() > d.x.abs() { if d.y < 0.0 { 0 } else { 2 } } else if d.x > 0.0 { 1 } else { 3 };
         Some((wedge, ring))
-    });
-    for (wi, (_, _, a0, a1, _)) in wedges.iter().enumerate() {
+    };
+    let hover_cell = hover.and_then(cell_at);
+    for (wi, (_, _, a0, a1, _, _)) in wedges.iter().enumerate() {
         for ring in 0..4 {
             let hot = hover_cell == Some((wi, ring));
-            let shade = 30 + ring as u8 * 7;
-            let fill = if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 5) };
-            let gap_deg = 3.2_f32;
-            annular(&p, c, bounds[ring] + 1.0, bounds[ring + 1] - 1.0, (a0 + gap_deg).to_radians(), (a1 - gap_deg).to_radians(), fill, if hot { Stroke::new(1.5_f32, ACCENT) } else { line });
+            let shade = 24 + ring as u8 * 6;
+            let fill = if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 4) };
+            annular(&p, c, bounds[ring] + 1.5, bounds[ring + 1] - 1.0, (a0 + 4.0).to_radians(), (a1 - 4.0).to_radians(), fill, if hot { Stroke::new(1.5_f32, ACCENT) } else { line });
         }
     }
-    // ring step labels along the top wedge
-    for (ring, s) in RINGS.iter().enumerate() {
-        let r = (bounds[ring] + bounds[ring + 1]) / 2.0;
-        p.text(c + vec2(0.0, -r), Align2::CENTER_CENTER, format!("{}", s), FontId::proportional(side * 0.058), Color32::from_gray(150));
+    // step values on every wedge, centred in each ring
+    for (wi, (_, _, _, _, dir, _)) in wedges.iter().enumerate() {
+        for (ring, s) in RINGS.iter().enumerate() {
+            let r = (bounds[ring] + bounds[ring + 1]) / 2.0;
+            let hot = hover_cell == Some((wi, ring));
+            p.text(c + *dir * r, Align2::CENTER_CENTER, format!("{}", s), FontId::proportional((side * 0.052).max(9.0)), if hot { WHITE } else { dim_txt });
+        }
+        // direction chevron in the hub ring
+        let hub_hot = hover_cell.map_or(false, |h| h.0 == wi);
+        chevron(&p, c + *dir * (r0 - 4.5), *dir, 3.2, if hub_hot { ACCENT } else { Color32::from_gray(90) });
     }
     // centre: home XY
-    let centre_hot = hover.map_or(false, |h| (h - c).length() < bounds[0] - 1.0);
-    p.circle_filled(c, bounds[0] - 1.0, if centre_hot { hot_fill } else { base });
-    p.circle_stroke(c, bounds[0] - 1.0, if centre_hot { Stroke::new(1.5_f32, ACCENT) } else { line });
-    crate::icons::glyph(&p, "home", c - vec2(0.0, 4.0), if centre_hot { WHITE } else { Color32::from_gray(150) }, 0.0);
-    p.text(c + vec2(0.0, 11.0), Align2::CENTER_CENTER, "XY", FontId::monospace(9.0), Color32::from_gray(150));
+    let centre_hot = hover.map_or(false, |h| (h - c).length() < bounds[0] - 9.0);
+    p.circle_filled(c, bounds[0] - 9.0, if centre_hot { hot_fill } else { Color32::from_rgb(16, 18, 22) });
+    p.circle_stroke(c, bounds[0] - 9.0, Stroke::new(1.5_f32, if centre_hot { ACCENT } else { Color32::from_rgb(60, 66, 78) }));
+    crate::icons::house(&p, c - vec2(0.0, 3.0), 7.0, if centre_hot { WHITE } else { Color32::from_gray(170) }, if centre_hot { hot_fill } else { Color32::from_rgb(16, 18, 22) });
+    p.text(c + vec2(0.0, 11.0), Align2::CENTER_CENTER, "XY", FontId::monospace(8.5), dim_txt);
 
-    // corner badges
-    let bs = side * 0.2;
-    let corners = [(0usize, "X", Jog::HomeX), (1, "Y", Jog::HomeY), (2, "ALL", Jog::HomeAll), (3, "Z", Jog::HomeZ)];
-    let badge_rect = |k: usize| -> Rect { match k { 0 => Rect::from_min_size(pad.left_top(), vec2(bs, bs)), 1 => Rect::from_min_size(pad.right_top() - vec2(bs, 0.0), vec2(bs, bs)), 2 => Rect::from_min_size(pad.left_bottom() - vec2(0.0, bs), vec2(bs, bs)), _ => Rect::from_min_size(pad.right_bottom() - vec2(bs, bs), vec2(bs, bs)) } };
-    for (k, label, jog) in corners {
-        let r = badge_rect(k);
-        let hot = hover.map_or(false, |h| r.contains(h) && match k { 0 => (h.x - r.left()) + (h.y - r.top()) < bs, 1 => (r.right() - h.x) + (h.y - r.top()) < bs, 2 => (h.x - r.left()) + (r.bottom() - h.y) < bs, _ => (r.right() - h.x) + (r.bottom() - h.y) < bs });
-        corner_badge(&p, r, k, label, hot);
+    // corner badges (rounded squares, clear of the circle)
+    let bs = (side * 0.16).clamp(30.0, 40.0);
+    let m = 2.0;
+    let badges: [(Rect, &str, Jog); 4] = [
+        (Rect::from_min_size(pad.left_top() + vec2(m, m), vec2(bs, bs)), "X", Jog::HomeX),
+        (Rect::from_min_size(pad.right_top() + vec2(-bs - m, m), vec2(bs, bs)), "Y", Jog::HomeY),
+        (Rect::from_min_size(pad.left_bottom() + vec2(m, -bs - m), vec2(bs, bs)), "ALL", Jog::HomeAll),
+        (Rect::from_min_size(pad.right_bottom() + vec2(-bs - m, -bs - m), vec2(bs, bs)), "Z", Jog::HomeZ),
+    ];
+    for (r, label, jog) in badges {
+        let hot = hover.map_or(false, |h| r.contains(h));
+        corner_badge(&p, r, label, hot);
         if hot && click.is_some() { action = Some(jog); }
     }
 
-    // --- Z strip ---
-    let seg_h = (zr.height() - zw) / 8.0;
+    // --- Z strip: four step segments above and below a motors-off button ---
+    let seg_h = (zr.height() - zw - 28.0) / 8.0;
     let mid = zr.center().y;
+    let top0 = zr.top() + 14.0;
     let z_cells: Vec<(Rect, f32, String)> = (0..8).map(|i| {
         if i < 4 {
-            let y0 = zr.top() + i as f32 * seg_h;
-            (Rect::from_min_size(egui::pos2(zr.left(), y0), vec2(zw, seg_h)), ZSTEPS[3 - i], format!("{}", ZSTEPS[3 - i]))
+            (Rect::from_min_size(egui::pos2(zr.left(), top0 + i as f32 * seg_h), vec2(zw, seg_h)), ZSTEPS[3 - i], format!("{}", ZSTEPS[3 - i]))
         } else {
             let k = i - 4;
-            let y0 = mid + zw / 2.0 + k as f32 * seg_h;
-            (Rect::from_min_size(egui::pos2(zr.left(), y0), vec2(zw, seg_h)), -ZSTEPS[k], format!("{}", ZSTEPS[k]))
+            (Rect::from_min_size(egui::pos2(zr.left(), mid + zw / 2.0 + k as f32 * seg_h), vec2(zw, seg_h)), -ZSTEPS[k], format!("{}", ZSTEPS[k]))
         }
     }).collect();
     for (i, (r, delta, label)) in z_cells.iter().enumerate() {
         let hot = hover.map_or(false, |h| r.contains(h));
-        let shade = 36 - (if i < 4 { (3 - i) as u8 } else { i as u8 - 4 }) * 3;
-        p.rect_filled(r.shrink(1.0), 4.0, if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 5) });
-        p.rect_stroke(r.shrink(1.0), 4.0, if hot { Stroke::new(1.5_f32, ACCENT) } else { line }, StrokeKind::Inside);
-        p.text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(side * 0.054), Color32::from_gray(150));
+        let k = if i < 4 { 3 - i } else { i - 4 };
+        let shade = 24 + (3 - k as u8) * 6;
+        p.rect_filled(r.shrink2(vec2(0.0, 1.0)), 5.0, if hot { hot_fill } else { Color32::from_rgb(shade, shade + 1, shade + 4) });
+        p.rect_stroke(r.shrink2(vec2(0.0, 1.0)), 5.0, if hot { Stroke::new(1.5_f32, ACCENT) } else { line }, StrokeKind::Inside);
+        p.text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional((side * 0.05).max(9.0)), if hot { WHITE } else { dim_txt });
         if hot && click.is_some() { action = Some(Jog::Move(2, *delta)); }
     }
-    let zc = zr.center();
+    p.text(egui::pos2(zr.center().x, zr.top() + 6.0), Align2::CENTER_CENTER, "Z+", FontId::monospace(10.5), DIM);
+    p.text(egui::pos2(zr.center().x, zr.bottom() - 6.0), Align2::CENTER_CENTER, "Z-", FontId::monospace(10.5), DIM);
+    let zc = egui::pos2(zr.center().x, mid);
     let off_hot = hover.map_or(false, |h| (h - zc).length() < zw / 2.0);
-    p.circle_filled(zc, zw / 2.0 - 1.0, if off_hot { Color32::from_rgb(130, 218, 255) } else { ACCENT });
-    p.text(zc, Align2::CENTER_CENTER, "OFF", FontId::monospace(10.5), Color32::from_rgb(4, 14, 22));
+    p.circle_filled(zc, zw / 2.0 - 2.0, if off_hot { Color32::from_rgb(130, 218, 255) } else { ACCENT });
+    p.text(zc, Align2::CENTER_CENTER, "OFF", FontId::monospace(10.0), Color32::from_rgb(4, 14, 22));
     if off_hot && click.is_some() { action = Some(Jog::MotorsOff); }
-    p.text(egui::pos2(zr.center().x, zr.top() - 1.0), Align2::CENTER_BOTTOM, "Z", FontId::monospace(10.0), DIM);
 
     // click handling for the circular pad
     if let (Some(pt), None) = (click, action) {
         if pad.contains(pt) {
             let d = pt - c;
             let r = d.length();
-            if r < bounds[0] {
+            if r < bounds[0] - 6.0 {
                 action = Some(Jog::HomeXY);
-            } else if r <= rr {
-                if let Some(ring) = (0..4).find(|i| r >= bounds[*i] && r <= bounds[*i + 1]) {
-                    let step = RINGS[ring];
-                    let wedge = if d.y.abs() > d.x.abs() { if d.y < 0.0 { 0 } else { 2 } } else if d.x > 0.0 { 1 } else { 3 };
-                    let (axis, sign, _, _, _) = wedges[wedge];
-                    action = Some(Jog::Move(axis, sign * step));
-                }
+            } else if let Some((wedge, ring)) = cell_at(pt) {
+                let (axis, sign, ..) = wedges[wedge];
+                action = Some(Jog::Move(axis, sign * RINGS[ring]));
             }
         }
     }
     if let Some(h) = hover_cell {
-        let (axis_lbl, step) = (wedges[h.0].4, RINGS[h.1]);
-        resp.on_hover_text(format!("{} {} mm", axis_lbl, step));
+        resp.on_hover_text(format!("{} {} mm", wedges[h.0].5, RINGS[h.1]));
+    } else if hover.map_or(false, |h| (h - c).length() < bounds[0] - 6.0) {
+        resp.on_hover_text("Home X and Y");
     }
     action
 }
@@ -1171,4 +1176,16 @@ pub fn color_chip(ui: &mut Ui, text: &str, col: Color32) {
     ui.painter().rect_filled(r, 11.0, col);
     ui.painter().rect_stroke(r, 11.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 50)), StrokeKind::Inside);
     ui.painter().galley(r.center() - galley.size() / 2.0, galley, on_color(col));
+}
+
+/// Inline position field: label on the left, the live value on the right and the
+/// commanded value in small brackets in the top-right corner.
+pub fn axis_field(ui: &mut Ui, w: f32, label: &str, actual: f32, target: f32, dec: usize) {
+    let (r, _) = ui.allocate_exact_size(vec2(w, 54.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(r, 9.0, CARD);
+    p.rect_stroke(r, 9.0, Stroke::new(1.0_f32, CARD_LINE), StrokeKind::Inside);
+    p.text(r.left_center() + vec2(14.0, 4.0), Align2::LEFT_CENTER, label, FontId::proportional(15.0), Color32::from_gray(150));
+    p.text(r.right_center() + vec2(-14.0, 6.0), Align2::RIGHT_CENTER, format!("{:.*}", dec, actual), FontId::monospace(17.0), WHITE);
+    p.text(r.right_top() + vec2(-12.0, 8.0), Align2::RIGHT_CENTER, format!("[{:.*}]", dec, target), FontId::monospace(10.0), Color32::from_gray(120));
 }

@@ -284,3 +284,16 @@ pub fn head_glyph(head: &str) -> Option<&'static str> {
     ];
     pairs.iter().find(|(k, _)| h.contains(k)).map(|(_, g)| *g)
 }
+
+/// Solid house: eaves, body and a door cut-out. `half` is half the icon width in px.
+pub fn house(p: &Painter, c: Pos2, half: f32, fill: Color32, door: Color32) {
+    use eframe::egui::Shape;
+    let u = half / 11.0;
+    let pt = |x: f32, y: f32| c + vec2(x * u, y * u);
+    // roof with overhanging eaves
+    p.add(Shape::convex_polygon(vec![pt(0.0, -10.0), pt(11.0, 0.2), pt(-11.0, 0.2)], fill, Stroke::NONE));
+    // body, slightly narrower than the eaves
+    p.add(Shape::convex_polygon(vec![pt(-7.0, -1.0), pt(7.0, -1.0), pt(7.0, 9.5), pt(-7.0, 9.5)], fill, Stroke::NONE));
+    // door
+    p.add(Shape::convex_polygon(vec![pt(-2.2, 3.6), pt(2.2, 3.6), pt(2.2, 9.5), pt(-2.2, 9.5)], door, Stroke::NONE));
+}

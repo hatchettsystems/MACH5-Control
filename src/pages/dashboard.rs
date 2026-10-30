@@ -495,14 +495,35 @@ fn p_temps(ui: &mut Ui, m: &mut Model) {
 
 fn p_move(ui: &mut Ui, m: &mut Model) {
     panel(ui, "Movement", |ui| {
-        tiles_min(ui, &[
-            ("X", format!("{:.2}", m.pos[0])),
-            ("Y", format!("{:.2}", m.pos[1])),
-            ("Z", format!("{:.2}", m.pos[2])),
-            ("E", format!("{:.1}", m.pos[3])),
-        ], 74.0);
-        ui.add_space(4.0);
-        let side = (ui.available_width() - 80.0).clamp(170.0, 250.0);
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+            crate::icons::glyph(&ui.painter().clone(), "gauge", r.center(), Color32::from_gray(200), 0.0);
+            ui.label(RichText::new(if m.st.rel_mode { "Position: relative" } else { "Position: absolute" }).size(13.5).color(WHITE));
+            if sbtn(ui, if m.st.rel_mode { "Use absolute (G90)" } else { "Use relative (G91)" }).clicked() { m.st.rel_mode = !m.st.rel_mode; }
+        });
+        ui.add_space(6.0);
+        // live values include the drive following error; the bracket is the commanded position
+        let fe = |i: usize| m.drives.get(i).map(|d| d.follow / 1000.0).unwrap_or(0.0);
+        let jitter = (m.t as f32 * 7.0).sin() * 0.004;
+        let vals = [("X", m.pos[0] + fe(0), m.pos[0], 2), ("Y", m.pos[1] - fe(1), m.pos[1], 2), ("Z", m.pos[2] + fe(2) * 0.1 + jitter, m.pos[2], 3), ("E", m.pos[3], m.pos[3], 1)];
+        let gap = 8.0;
+        let avail = ui.available_width();
+        let n = if avail >= 460.0 { 4 } else { 2 };
+        let w = (avail - gap * (n as f32 - 1.0)) / n as f32;
+        for row in vals.chunks(n) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (l, a, t, d) in row { axis_field(ui, w, l, *a, *t, *d); }
+            });
+            ui.add_space(gap - 2.0);
+        }
+        ui.horizontal_wrapped(|ui| {
+            if primary(ui, "Home all") { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
+            if button(ui, "Motors off") { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
+            if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
+        });
+        ui.add_space(6.0);
+        let side = (ui.available_width() - 90.0).clamp(180.0, 270.0);
         let act = ui.vertical_centered(|ui| jog_pad(ui, side)).inner;
         match act {
             Some(Jog::Move(axis, d)) => {
@@ -517,18 +538,18 @@ fn p_move(ui: &mut Ui, m: &mut Model) {
             Some(Jog::MotorsOff) => { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
             None => {}
         }
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(dim("Extruder"));
             stepper(ui, &mut m.st.extr_len, (1.0, 200.0), 5.0, " mm");
             let ok = m.heaters[0].cur > 170.0;
             if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
             if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
-            if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
         });
         ui.horizontal_wrapped(|ui| {
-            status(ui, if m.home.iter().all(|h| *h) { Status::Ok } else { Status::Warn }, if m.home.iter().all(|h| *h) { "X Y Z homed" } else { "not homed - use the corner badges" });
-            if !m.heaters[0].cur.gt(&170.0) { ui.label(dim("hotend below 170 C: extrusion locked")); }
+            let homed = m.home.iter().all(|h| *h);
+            status(ui, if homed { Status::Ok } else { Status::Warn }, if homed { "X Y Z homed" } else { "not homed - use a house button" });
+            if m.heaters[0].cur <= 170.0 { ui.label(dim("hotend below 170 C: extrusion locked")); }
         });
     });
 }
