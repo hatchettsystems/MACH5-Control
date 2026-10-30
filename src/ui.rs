@@ -940,7 +940,6 @@ pub enum Jog {
     HomeY,
     HomeZ,
     HomeAll,
-    HomeXY,
     MotorsOff,
 }
 
@@ -970,10 +969,11 @@ fn annular(p: &egui::Painter, c: egui::Pos2, r_in: f32, r_out: f32, a0: f32, a1:
     p.add(Shape::line(outline, stroke));
 }
 
-fn corner_badge(p: &egui::Painter, rect: Rect, label: &str, hot: bool) {
-    let fill = if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT };
+/// A home badge: accent blue when that axis is homed, grey when it is not.
+fn corner_badge(p: &egui::Painter, rect: Rect, label: &str, hot: bool, lit: bool) {
+    let fill = if lit { if hot { Color32::from_rgb(130, 218, 255) } else { ACCENT } } else if hot { Color32::from_rgb(92, 98, 110) } else { Color32::from_rgb(60, 65, 75) };
     p.rect_filled(rect, 8.0, fill);
-    let ink = Color32::from_rgb(4, 14, 22);
+    let ink = if lit { Color32::from_rgb(4, 14, 22) } else { Color32::from_rgb(190, 196, 206) };
     crate::icons::house(p, rect.center() - vec2(0.0, rect.height() * 0.12), rect.width() * 0.26, ink, fill);
     p.text(rect.center() + vec2(0.0, rect.height() * 0.30), Align2::CENTER_CENTER, label, FontId::monospace((rect.height() * 0.26).clamp(8.0, 11.0)), ink);
 }
@@ -984,7 +984,7 @@ fn chevron(p: &egui::Painter, c: egui::Pos2, dir: egui::Vec2, size: f32, col: Co
 }
 
 /// Returns the action clicked this frame, if any.
-pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
+pub fn jog_pad(ui: &mut Ui, side: f32, homed: [bool; 3]) -> Option<Jog> {
     let zw = (side * 0.2).clamp(40.0, 52.0);
     let gap = 16.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(side + gap + zw, side), Sense::click());
@@ -1041,25 +1041,26 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
         let hub_hot = hover_cell.map_or(false, |h| h.0 == wi);
         chevron(&p, c + *dir * (r0 - 4.5), *dir, 3.2, if hub_hot { ACCENT } else { Color32::from_gray(90) });
     }
-    // centre: home XY
+    // centre: home all (lit when every axis is homed)
+    let all_homed = homed.iter().all(|h| *h);
     let centre_hot = hover.map_or(false, |h| (h - c).length() < bounds[0] - 9.0);
-    p.circle_filled(c, bounds[0] - 9.0, if centre_hot { hot_fill } else { Color32::from_rgb(16, 18, 22) });
-    p.circle_stroke(c, bounds[0] - 9.0, Stroke::new(1.5_f32, if centre_hot { ACCENT } else { Color32::from_rgb(60, 66, 78) }));
-    crate::icons::house(&p, c - vec2(0.0, 3.0), 7.0, if centre_hot { WHITE } else { Color32::from_gray(170) }, if centre_hot { hot_fill } else { Color32::from_rgb(16, 18, 22) });
-    p.text(c + vec2(0.0, 11.0), Align2::CENTER_CENTER, "XY", FontId::monospace(8.5), dim_txt);
+    let cfill = if all_homed { if centre_hot { Color32::from_rgb(130, 218, 255) } else { ACCENT } } else if centre_hot { Color32::from_rgb(92, 98, 110) } else { Color32::from_rgb(60, 65, 75) };
+    let cink = if all_homed { Color32::from_rgb(4, 14, 22) } else { Color32::from_rgb(190, 196, 206) };
+    p.circle_filled(c, bounds[0] - 9.0, cfill);
+    crate::icons::house(&p, c - vec2(0.0, 3.0), 7.5, cink, cfill);
+    p.text(c + vec2(0.0, 11.5), Align2::CENTER_CENTER, "ALL", FontId::monospace(8.5), cink);
 
     // corner badges (rounded squares, clear of the circle)
     let bs = (side * 0.16).clamp(30.0, 40.0);
     let m = 2.0;
-    let badges: [(Rect, &str, Jog); 4] = [
-        (Rect::from_min_size(pad.left_top() + vec2(m, m), vec2(bs, bs)), "X", Jog::HomeX),
-        (Rect::from_min_size(pad.right_top() + vec2(-bs - m, m), vec2(bs, bs)), "Y", Jog::HomeY),
-        (Rect::from_min_size(pad.left_bottom() + vec2(m, -bs - m), vec2(bs, bs)), "ALL", Jog::HomeAll),
-        (Rect::from_min_size(pad.right_bottom() + vec2(-bs - m, -bs - m), vec2(bs, bs)), "Z", Jog::HomeZ),
+    let badges: [(Rect, &str, Jog, bool); 3] = [
+        (Rect::from_min_size(pad.left_top() + vec2(m, m), vec2(bs, bs)), "X", Jog::HomeX, homed[0]),
+        (Rect::from_min_size(pad.right_top() + vec2(-bs - m, m), vec2(bs, bs)), "Y", Jog::HomeY, homed[1]),
+        (Rect::from_min_size(pad.right_bottom() + vec2(-bs - m, -bs - m), vec2(bs, bs)), "Z", Jog::HomeZ, homed[2]),
     ];
-    for (r, label, jog) in badges {
+    for (r, label, jog, lit) in badges {
         let hot = hover.map_or(false, |h| r.contains(h));
-        corner_badge(&p, r, label, hot);
+        corner_badge(&p, r, label, hot, lit);
         if hot && click.is_some() { action = Some(jog); }
     }
 
@@ -1089,7 +1090,7 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
     let zc = egui::pos2(zr.center().x, mid);
     let off_hot = hover.map_or(false, |h| (h - zc).length() < zw / 2.0);
     p.circle_filled(zc, zw / 2.0 - 2.0, if off_hot { Color32::from_rgb(130, 218, 255) } else { ACCENT });
-    p.text(zc, Align2::CENTER_CENTER, "OFF", FontId::monospace(10.0), Color32::from_rgb(4, 14, 22));
+    crate::icons::glyph(&p, "motor", zc, Color32::from_rgb(4, 14, 22), 0.0);
     if off_hot && click.is_some() { action = Some(Jog::MotorsOff); }
 
     // click handling for the circular pad
@@ -1098,7 +1099,7 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
             let d = pt - c;
             let r = d.length();
             if r < bounds[0] - 6.0 {
-                action = Some(Jog::HomeXY);
+                action = Some(Jog::HomeAll);
             } else if let Some((wedge, ring)) = cell_at(pt) {
                 let (axis, sign, ..) = wedges[wedge];
                 action = Some(Jog::Move(axis, sign * RINGS[ring]));
@@ -1108,7 +1109,7 @@ pub fn jog_pad(ui: &mut Ui, side: f32) -> Option<Jog> {
     if let Some(h) = hover_cell {
         resp.on_hover_text(format!("{} {} mm", wedges[h.0].5, RINGS[h.1]));
     } else if hover.map_or(false, |h| (h - c).length() < bounds[0] - 6.0) {
-        resp.on_hover_text("Home X and Y");
+        resp.on_hover_text("Home all axes");
     }
     action
 }

@@ -22,11 +22,24 @@ struct App {
     tour: Option<tour::Tour>,
 }
 
+/// Window / taskbar icon, decoded from assets/icon.png.
+fn app_icon() -> egui::IconData {
+    match image::load_from_memory(include_bytes!("../assets/icon.png")) {
+        Ok(img) => {
+            let img = img.to_rgba8();
+            let (width, height) = img.dimensions();
+            egui::IconData { rgba: img.into_raw(), width, height }
+        }
+        Err(_) => egui::IconData::default(),
+    }
+}
+
 fn main() -> eframe::Result {
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(std::env::var("MACH5_SIZE").ok().and_then(|s| { let (w, h) = s.split_once('x')?; Some([w.parse().ok()?, h.parse().ok()?]) }).unwrap_or([1440.0, 900.0]))
             .with_min_inner_size([960.0, 600.0])
+            .with_icon(app_icon())
             .with_title("MACH5 Management Interface"),
         ..Default::default()
     };

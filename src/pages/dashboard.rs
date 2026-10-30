@@ -237,6 +237,12 @@ fn p_filament(ui: &mut Ui, m: &mut Model, _h: f32) {
         accent_bar(ui, frac, ui.available_width());
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
+            stepper(ui, &mut m.st.extr_len, (1.0, 200.0), 5.0, " mm");
+            let ok = m.heaters[0].cur > 170.0;
+            if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
+            if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
+        });
+        ui.horizontal_wrapped(|ui| {
             if button(ui, "Load") { run_cmd(m, "LOAD_FILAMENT"); }
             if button(ui, "Unload") { run_cmd(m, "UNLOAD_FILAMENT"); }
         });
@@ -498,8 +504,7 @@ fn p_move(ui: &mut Ui, m: &mut Model) {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
             crate::icons::glyph(&ui.painter().clone(), "gauge", r.center(), Color32::from_gray(200), 0.0);
-            ui.label(RichText::new(if m.st.rel_mode { "Position: relative" } else { "Position: absolute" }).size(13.5).color(WHITE));
-            if sbtn(ui, if m.st.rel_mode { "Use absolute (G90)" } else { "Use relative (G91)" }).clicked() { m.st.rel_mode = !m.st.rel_mode; }
+            ui.label(RichText::new("Position: absolute").size(13.5).color(WHITE));
         });
         ui.add_space(6.0);
         // live values include the drive following error; the bracket is the commanded position
@@ -517,14 +522,10 @@ fn p_move(ui: &mut Ui, m: &mut Model) {
             });
             ui.add_space(gap - 2.0);
         }
-        ui.horizontal_wrapped(|ui| {
-            if primary(ui, "Home all") { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
-            if button(ui, "Motors off") { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
-            if button(ui, "Park") { m.pos[0] = 175.0; m.pos[1] = 340.0; }
-        });
-        ui.add_space(6.0);
+        ui.add_space(4.0);
         let side = (ui.available_width() - 90.0).clamp(180.0, 270.0);
-        let act = ui.vertical_centered(|ui| jog_pad(ui, side)).inner;
+        let homed = m.home;
+        let act = ui.vertical_centered(|ui| jog_pad(ui, side, homed)).inner;
         match act {
             Some(Jog::Move(axis, d)) => {
                 let lim = [350.0, 350.0, 330.0][axis];
@@ -533,24 +534,10 @@ fn p_move(ui: &mut Ui, m: &mut Model) {
             Some(Jog::HomeX) => { m.pos[0] = 0.0; m.home[0] = true; }
             Some(Jog::HomeY) => { m.pos[1] = 0.0; m.home[1] = true; }
             Some(Jog::HomeZ) => { m.pos[2] = 0.0; m.home[2] = true; }
-            Some(Jog::HomeXY) => { m.pos[0] = 0.0; m.pos[1] = 0.0; m.home[0] = true; m.home[1] = true; }
             Some(Jog::HomeAll) => { m.pos[..3].fill(0.0); m.home = [true; 3]; m.log(Sev::Info, "motion", "Homed X Y Z"); }
             Some(Jog::MotorsOff) => { m.home = [false; 3]; m.log(Sev::Info, "motion", "Drives disabled (EN low)"); }
             None => {}
         }
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(dim("Extruder"));
-            stepper(ui, &mut m.st.extr_len, (1.0, 200.0), 5.0, " mm");
-            let ok = m.heaters[0].cur > 170.0;
-            if button_en(ui, ok, "Extrude") { m.pos[3] += m.st.extr_len; }
-            if button_en(ui, ok, "Retract") { m.pos[3] -= m.st.extr_len; }
-        });
-        ui.horizontal_wrapped(|ui| {
-            let homed = m.home.iter().all(|h| *h);
-            status(ui, if homed { Status::Ok } else { Status::Warn }, if homed { "X Y Z homed" } else { "not homed - use a house button" });
-            if m.heaters[0].cur <= 170.0 { ui.label(dim("hotend below 170 C: extrusion locked")); }
-        });
     });
 }
 

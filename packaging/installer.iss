@@ -13,6 +13,7 @@ AppPublisher=Hatchett Systems
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\assets\icon.ico
 OutputDir=..\dist
 OutputBaseFilename=MACH5-Control-Setup
 Compression=lzma2

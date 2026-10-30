@@ -269,7 +269,6 @@ pub struct St {
     pub probe_ok: bool,
     pub sel_drive: usize,
     pub sel_fleet: usize,
-    pub rel_mode: bool,
     pub con_filter: usize,
     pub hist: Vec<String>,
     pub hist_idx: usize,
